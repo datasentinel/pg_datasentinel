@@ -1,0 +1,7 @@
+*.o
+*.obj
+*.bc
+*.so
+*.dll
+.deps/
+.vscode/

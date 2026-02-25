@@ -1,0 +1,4 @@
+comment = 'Datasentinel diag extension'
+default_version = '0.1.0'
+module_pathname = '$libdir/datasentinel_diag'
+relocatable = false
