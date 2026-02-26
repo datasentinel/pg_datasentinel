@@ -1,9 +1,9 @@
-EXTENSION = datasentinel_diag
+EXTENSION = pg_datasentinel
 
-MODULE_big = datasentinel_diag
-OBJS = datasentinel_diag.o dsdiag_linux.o dsdiag_utils.o
+MODULE_big = pg_datasentinel
+OBJS = pg_datasentinel.o dsdiag_linux.o dsdiag_utils.o
 
-DATA = datasentinel_diag--0.1.0.sql
+DATA = pg_datasentinel--0.1.0.sql
 
 REGRESS = init autovacuum
 REGRESS_OPTS = --temp-config=regress.conf
@@ -14,7 +14,7 @@ PG_CONFIG := pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 else
-subdir = contrib/datasentinel_diag
+subdir = contrib/pg_datasentinel
 top_builddir = ../..
 include $(top_builddir)/src/Makefile.global
 include $(top_srcdir)/contrib/contrib-global.mk

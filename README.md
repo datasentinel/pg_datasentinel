@@ -1,1 +1,1 @@
-# datasentinel_diag
+# pg_datasentinel

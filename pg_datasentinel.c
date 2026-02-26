@@ -379,7 +379,7 @@ _PG_init(void)
 	 * In order to create our shared memory area, we have to be loaded via
 	 * shared_preload_libraries.  If not, fall out without hooking into any of
 	 * the main system.  (We don't throw error here because it seems useful to
-	 * allow the datasentinel_diag functions to be created even when the
+	 * allow the pg_datasentinel functions to be created even when the
 	 * module isn't active.  The functions must protect themselves against
 	 * being called then, however.)
 	 */
@@ -389,8 +389,8 @@ _PG_init(void)
 	/*
 	 * Define custom GUC variables.
 	 */
-	DefineCustomIntVariable("datasentinel_diag.max",
-							"Sets the maximum number of actions tracked by datasentinel_diag.",
+	DefineCustomIntVariable("pg_datasentinel.max",
+							"Sets the maximum number of actions tracked by pg_datasentinel.",
 							NULL,
 							&max_actions,
 							5000,
@@ -401,8 +401,8 @@ _PG_init(void)
 							NULL,
 							NULL,
 							NULL);
-	DefineCustomBoolVariable("datasentinel_diag.save",
-							 "Save datasentinel_diag actions across server shutdowns.",
+	DefineCustomBoolVariable("pg_datasentinel.save",
+							 "Save pg_datasentinel actions across server shutdowns.",
 							 NULL,
 							 &dump_on_shutdown,
 							 true,

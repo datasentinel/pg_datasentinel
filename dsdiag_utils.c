@@ -4,7 +4,7 @@
 #include "dsdiag_utils.h"
 
 /*
- * Parse schemaname and relname from an autovacuum log message.
+ * Parse schemaname and relname from alog message.
  *
  * The message format is:
  *   automatic [aggressive] vacuum [to prevent wraparound] of table "db.schema.table": ...

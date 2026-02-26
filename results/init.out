@@ -1,16 +1,16 @@
-CREATE EXTENSION datasentinel_diag;
+CREATE EXTENSION pg_datasentinel;
+ERROR:  extension "pg_datasentinel" is not available
+DETAIL:  Could not open extension control file "/soft/projects/postgres/build/share/extension/pg_datasentinel.control": No such file or directory.
+HINT:  The extension must first be installed on the system where PostgreSQL is running.
 -- Verify the autovacuum view is queryable
 SELECT count(*) >= 0 AS autovacuum_view_ok FROM ds_autovacuum_activity;
- autovacuum_view_ok 
---------------------
- t
-(1 row)
-
+ERROR:  relation "ds_autovacuum_activity" does not exist
+LINE 1: SELECT count(*) >= 0 AS autovacuum_view_ok FROM ds_autovacuu...
+                                                        ^
 -- Verify the stat activity view is queryable
 SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activity;
- stat_activity_ok 
-------------------
- t
-(1 row)
-
-DROP EXTENSION datasentinel_diag;
+ERROR:  relation "ds_stat_activity" does not exist
+LINE 1: SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activi...
+                                                      ^
+DROP EXTENSION pg_datasentinel;
+ERROR:  extension "pg_datasentinel" does not exist

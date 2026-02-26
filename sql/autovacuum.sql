@@ -5,7 +5,7 @@ CREATE TABLE test_av (id int);
 ALTER TABLE test_av SET (autovacuum_vacuum_scale_factor = 0, autovacuum_vacuum_threshold = 0);
 INSERT INTO test_av SELECT generate_series(1, 1000);
 DELETE FROM test_av;
--- Wait for autovacuum to run and be captured by the hook.
+-- Wait for autovacuum to run.
 SELECT pg_sleep(5);
 \o
 
