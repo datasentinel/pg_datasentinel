@@ -1,0 +1,6 @@
+ has_seq | has_logged_at | has_operation | has_datname | has_schemaname | has_relname | has_message
+---------+---------------+---------------+-------------+----------------+-------------+-------------
+ t       | t             | t             | t           | t              | t           | t
+(1 row)
+
+DROP TABLE

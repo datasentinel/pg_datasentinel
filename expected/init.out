@@ -1,7 +1,12 @@
-CREATE EXTENSION datasentinel_diag;
-SELECT hello_world() as text;
-     text      
----------------
- hello, world!
+CREATE EXTENSION
+ autovacuum_view_ok
+--------------------
+ t
 (1 row)
 
+ stat_activity_ok
+------------------
+ t
+(1 row)
+
+DROP EXTENSION

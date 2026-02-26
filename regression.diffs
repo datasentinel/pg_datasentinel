@@ -1,0 +1,62 @@
+diff -U3 /soft/projects/datasentinel_diag/expected/init.out /soft/projects/datasentinel_diag/results/init.out
+--- /soft/projects/datasentinel_diag/expected/init.out	2026-02-25 15:37:52.225092866 +0100
++++ /soft/projects/datasentinel_diag/results/init.out	2026-02-25 15:52:22.762060380 +0100
+@@ -1,12 +1,16 @@
+-CREATE EXTENSION
+- autovacuum_view_ok
++CREATE EXTENSION datasentinel_diag;
++-- Verify the autovacuum view is queryable
++SELECT count(*) >= 0 AS autovacuum_view_ok FROM ds_autovacuum_activity;
++ autovacuum_view_ok 
+ --------------------
+  t
+ (1 row)
+ 
+- stat_activity_ok
++-- Verify the stat activity view is queryable
++SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activity;
++ stat_activity_ok 
+ ------------------
+  t
+ (1 row)
+ 
+-DROP EXTENSION
++DROP EXTENSION datasentinel_diag;
+diff -U3 /soft/projects/datasentinel_diag/expected/autovacuum.out /soft/projects/datasentinel_diag/results/autovacuum.out
+--- /soft/projects/datasentinel_diag/expected/autovacuum.out	2026-02-25 15:38:24.746924697 +0100
++++ /soft/projects/datasentinel_diag/results/autovacuum.out	2026-02-25 15:52:27.792134179 +0100
+@@ -1,6 +1,28 @@
+- has_seq | has_logged_at | has_operation | has_datname | has_schemaname | has_relname | has_message
+----------+---------------+---------------+-------------+----------------+-------------+-------------
+- t       | t             | t             | t           | t              | t           | t
+-(1 row)
+-
+-DROP TABLE
++-- Create a table and trigger autovacuum on it.
++\o /dev/null
++DROP TABLE IF EXISTS test_av;
++NOTICE:  table "test_av" does not exist, skipping
++CREATE TABLE test_av (id int);
++ALTER TABLE test_av SET (autovacuum_vacuum_scale_factor = 0, autovacuum_vacuum_threshold = 0);
++INSERT INTO test_av SELECT generate_series(1, 1000);
++DELETE FROM test_av;
++-- Wait for autovacuum to run and be captured by the hook.
++SELECT pg_sleep(5);
++\o
++-- Verify the view is queryable and returns the expected columns.
++SELECT
++    seq           IS NOT NULL AS has_seq,
++    logged_at     IS NOT NULL AS has_logged_at,
++    operation     IS NOT NULL AS has_operation,
++    datname       IS NOT NULL AS has_datname,
++    schemaname    IS NOT NULL AS has_schemaname,
++    relname       IS NOT NULL AS has_relname,
++    message       IS NOT NULL AS has_message
++FROM ds_autovacuum_activity
++ORDER BY seq
++;
++ERROR:  relation "ds_autovacuum_activity" does not exist
++LINE 9: FROM ds_autovacuum_activity
++             ^
++-- Clean up.
++DROP TABLE IF EXISTS test_av;

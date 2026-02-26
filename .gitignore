@@ -5,3 +5,5 @@
 *.dll
 .deps/
 .vscode/
+.claude/
+CLAUDE.md

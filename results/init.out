@@ -1,9 +1,16 @@
 CREATE EXTENSION datasentinel_diag;
-
 -- Verify the autovacuum view is queryable
 SELECT count(*) >= 0 AS autovacuum_view_ok FROM ds_autovacuum_activity;
+ autovacuum_view_ok 
+--------------------
+ t
+(1 row)
 
 -- Verify the stat activity view is queryable
 SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activity;
+ stat_activity_ok 
+------------------
+ t
+(1 row)
 
 DROP EXTENSION datasentinel_diag;

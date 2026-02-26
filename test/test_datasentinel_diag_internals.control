@@ -1,0 +1,5 @@
+comment = 'Test module for datasentinel_diag internals'
+default_version = '1.0'
+module_pathname = '$libdir/test_datasentinel_diag_internals'
+relocatable = true
+requires = 'datasentinel_diag'

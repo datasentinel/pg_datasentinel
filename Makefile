@@ -1,11 +1,12 @@
 EXTENSION = datasentinel_diag
 
 MODULE_big = datasentinel_diag
-OBJS = datasentinel_diag.o
+OBJS = datasentinel_diag.o dsdiag_linux.o dsdiag_utils.o
 
 DATA = datasentinel_diag--0.1.0.sql
 
-REGRESS = init
+REGRESS = init autovacuum
+REGRESS_OPTS = --temp-config=regress.conf
 USE_PGXS = 1
 
 ifdef USE_PGXS
