@@ -1,5 +1,5 @@
 MODULE_big = test_pg_datasentinel_internals
-OBJS = test_pg_datasentinel_internals.o ../dsdiag_utils.o
+OBJS = test_pg_datasentinel_internals.o ../pgds_utils.o
 
 EXTENSION = test_pg_datasentinel_internals
 DATA = test_pg_datasentinel_internals--1.0.sql

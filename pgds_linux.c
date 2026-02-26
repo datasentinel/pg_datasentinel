@@ -4,13 +4,13 @@
 #include <unistd.h>
 #include "common/file_utils.h"
 
-#include "dsdiag_linux.h"
+#include "pgds_linux.h"
 
 /*
  * Returns true if the directory at path exists and is accessible.
  */
 bool
-is_dir_accessible(const char *path)
+pgds_is_dir_accessible(const char *path)
 {
 	DIR		   *dirp = opendir(path);
 
@@ -29,7 +29,7 @@ is_dir_accessible(const char *path)
  * Returns -1 if the /proc directory cannot be opened (e.g. permission denied).
  */
 long
-get_temp_file_bytes(int pid)
+pgds_get_temp_file_bytes(int pid)
 {
 	char		fd_path[256];
 	struct dirent *entry;
@@ -86,7 +86,7 @@ get_temp_file_bytes(int pid)
  * Returns -1 on error.
  */
 long
-get_rss_memory_pages(int pid)
+pgds_get_rss_memory_pages(int pid)
 {
 	long		rss = 0;
 	FILE	   *fp;

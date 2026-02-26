@@ -1,7 +1,7 @@
 EXTENSION = pg_datasentinel
 
 MODULE_big = pg_datasentinel
-OBJS = pg_datasentinel.o dsdiag_linux.o dsdiag_utils.o
+OBJS = pg_datasentinel.o pgds_linux.o pgds_utils.o
 
 DATA = pg_datasentinel--0.1.0.sql
 

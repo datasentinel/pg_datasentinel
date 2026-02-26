@@ -1,7 +1,7 @@
 #include "postgres.h"
 #include "catalog/pg_type.h"
 
-#include "dsdiag_utils.h"
+#include "pgds_utils.h"
 
 /*
  * Parse schemaname and relname from alog message.
@@ -13,7 +13,7 @@
  * Writes empty strings if the pattern is not found.
  */
 void
-parse_table_from_message(const char *message, char *schemaname, char *relname)
+pgds_parse_table_from_message(const char *message, char *schemaname, char *relname)
 {
 	const char *start;
 	const char *end;

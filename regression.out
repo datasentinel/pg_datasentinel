@@ -1,7 +1,0 @@
-# using postmaster on localhost, port 5432
-not ok 1     - init                                       10 ms
-not ok 2     - autovacuum                               5021 ms
-1..2
-# 2 of 2 tests failed.
-# The differences that caused some tests to fail can be viewed in the file "/soft/projects/datasentinel_diag/regression.diffs".
-# A copy of the test summary that you see above is saved in the file "/soft/projects/datasentinel_diag/regression.out".

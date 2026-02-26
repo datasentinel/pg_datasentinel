@@ -31,3 +31,8 @@ LANGUAGE C VOLATILE;
 
 CREATE VIEW ds_autovacuum_activity AS
     SELECT * FROM ds_autovacuum_msgs();
+
+CREATE FUNCTION ds_autovacuum_activity_reset()
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C PARALLEL SAFE;
