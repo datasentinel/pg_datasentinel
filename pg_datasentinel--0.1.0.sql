@@ -16,14 +16,23 @@ CREATE VIEW ds_stat_activity AS
 
 
 CREATE FUNCTION ds_autovacuum_msgs(
-    OUT seq       int4,
-    OUT logged_at timestamptz,
-    OUT operation text,
-    OUT datname   text,
-    OUT schemaname text,
-    OUT relname    text,
-    OUT relid      oid,
-    OUT message   text
+    OUT seq                  int4,
+    OUT logged_at            timestamptz,
+    OUT operation            text,
+    OUT datname              text,
+    OUT schemaname           text,
+    OUT relname              text,
+    OUT relid                oid,
+    OUT heap_blks_total      int8,
+    OUT heap_blks_scanned    int8,
+    OUT heap_blks_vacuumed   int8,
+    OUT index_vacuum_count   int8,
+    OUT max_dead_tuple_bytes int8,
+    OUT dead_tuple_bytes     int8,
+    OUT num_dead_item_ids    int8,
+    OUT indexes_total        int8,
+    OUT indexes_processed    int8,
+    OUT message              text
 )
 RETURNS SETOF record
 AS 'MODULE_PATHNAME'

@@ -28,7 +28,10 @@ void		_PG_fini(void);
 
 #define PROC_VIRTUAL_FS    "/proc"
 #define DS_STAT_IDS_COLS		4
-#define DS_AUTOVACUUM_COLS		8	/* seq, logged_at, operation, datname, schemaname, relname, relid, message */
+#define DS_AUTOVACUUM_COLS		17	/* seq, logged_at, operation, datname, schemaname, relname, relid, message,
+								 * heap_blks_total, heap_blks_scanned, heap_blks_vacuumed, index_vacuum_count,
+								 * max_dead_tuple_bytes, dead_tuple_bytes, num_dead_item_ids,
+								 * indexes_total, indexes_processed */
 #define PGDS_MSG_LEN			4096	/* max length of a stored log message */
 
 /*
@@ -43,6 +46,16 @@ typedef struct PgdsAutovacuumEntry
 	char		schemaname[NAMEDATALEN];	/* schema name */
 	char		relname[NAMEDATALEN];	/* table name */
 	Oid			reloid;					/* OID of the relation */
+	/* vacuum progress counters (from pg_stat_progress_vacuum param2..param10) */
+	int64		heap_blks_total;
+	int64		heap_blks_scanned;
+	int64		heap_blks_vacuumed;
+	int64		index_vacuum_count;
+	int64		max_dead_tuple_bytes;
+	int64		dead_tuple_bytes;
+	int64		num_dead_item_ids;
+	int64		indexes_total;
+	int64		indexes_processed;
 	char		message[PGDS_MSG_LEN];
 } PgdsAutovacuumEntry;
 
@@ -144,7 +157,32 @@ ds_autovacuum_msgs(PG_FUNCTION_ARGS)
 			values[i++] = ObjectIdGetDatum(pgds_autovacuum->entries[idx].reloid);
 		else
 			nulls[i++] = true;
-		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].message);
+		/* vacuum progress counters: NULL for analyze entries */
+		if (strcmp(pgds_autovacuum->entries[idx].operation, "vacuum") == 0)
+		{
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_total);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_scanned);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_vacuumed);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].index_vacuum_count);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].max_dead_tuple_bytes);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].dead_tuple_bytes);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].num_dead_item_ids);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].indexes_total);
+			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].indexes_processed);
+		}
+		else
+		{
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+			nulls[i++] = true;
+		}
+  		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].message);
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
 
@@ -336,6 +374,40 @@ pgds_log_autovacuum(ErrorData *edata)
 			(nsoid != InvalidOid)
 			? get_relname_relid(pgds_autovacuum->entries[pgds_autovacuum->tail].relname, nsoid)
 			: InvalidOid;
+	}
+
+	/*
+	 * Capture vacuum progress counters from the backend's own status entry.
+	 * pgstat_progress_end_command() clears st_progress_command but leaves
+	 * st_progress_param intact, so the final counters are still readable here.
+	 */
+	{
+		PgdsAutovacuumEntry *e = &pgds_autovacuum->entries[pgds_autovacuum->tail];
+
+		if (strstr(edata->message, "vacuum") != NULL && MyBEEntry != NULL)
+		{
+			e->heap_blks_total      = MyBEEntry->st_progress_param[1];
+			e->heap_blks_scanned    = MyBEEntry->st_progress_param[2];
+			e->heap_blks_vacuumed   = MyBEEntry->st_progress_param[3];
+			e->index_vacuum_count   = MyBEEntry->st_progress_param[4];
+			e->max_dead_tuple_bytes = MyBEEntry->st_progress_param[5];
+			e->dead_tuple_bytes     = MyBEEntry->st_progress_param[6];
+			e->num_dead_item_ids    = MyBEEntry->st_progress_param[7];
+			e->indexes_total        = MyBEEntry->st_progress_param[8];
+			e->indexes_processed    = MyBEEntry->st_progress_param[9];
+		}
+		else
+		{
+			e->heap_blks_total      = 0;
+			e->heap_blks_scanned    = 0;
+			e->heap_blks_vacuumed   = 0;
+			e->index_vacuum_count   = 0;
+			e->max_dead_tuple_bytes = 0;
+			e->dead_tuple_bytes     = 0;
+			e->num_dead_item_ids    = 0;
+			e->indexes_total        = 0;
+			e->indexes_processed    = 0;
+		}
 	}
 
 	strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].message,
