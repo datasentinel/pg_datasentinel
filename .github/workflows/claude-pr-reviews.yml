@@ -31,6 +31,7 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
+          prompt: "Review this PR and look for bugs and security issues. Also explain the pull request target"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
           # Optional: Customize the trigger phrase (default: @claude)
@@ -42,8 +43,7 @@ jobs:
           # Optional: Configure Claude's behavior with CLI arguments
           claude_args: |
             --model claude-opus-4-6
-            --system-prompt "Please review this pull request and look for bugs and security issues. Only report on bugs and potential vulnerabilities you find. Be concise."
-            
+            --append-system-prompt "Follow our coding standards"
           #   --max-turns 10
           #   --allowedTools "Bash(npm install),Bash(npm run build),Bash(npm run test:*),Bash(npm run lint:*)"
 
