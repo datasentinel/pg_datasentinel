@@ -288,7 +288,7 @@ ds_autoanalyze_msgs(PG_FUNCTION_ARGS)
 }
 
 /*
- * ds_analyze_activity_reset: discard all entries from the analyze ring buffer.
+ * ds_autoanalyze_activity_reset: discard all entries from the analyze ring buffer.
  */
 Datum
 ds_autoanalyze_activity_reset(PG_FUNCTION_ARGS)
