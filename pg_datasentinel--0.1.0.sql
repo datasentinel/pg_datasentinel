@@ -47,13 +47,20 @@ LANGUAGE C PARALLEL SAFE;
 
 
 CREATE FUNCTION ds_autoanalyze_msgs(
-    OUT seq        int4,
-    OUT logged_at  timestamptz,
-    OUT datname    text,
-    OUT schemaname text,
-    OUT relname    text,
-    OUT relid      oid,
-    OUT message    text
+    OUT seq                        int4,
+    OUT logged_at                  timestamptz,
+    OUT datname                    text,
+    OUT schemaname                 text,
+    OUT relname                    text,
+    OUT relid                      oid,
+    OUT sample_blks_total          int8,
+    OUT sample_blks_scanned        int8,
+    OUT ext_stats_total            int8,
+    OUT ext_stats_computed         int8,
+    OUT child_tables_total         int8,
+    OUT child_tables_done          int8,
+    OUT current_child_table_relid  oid,
+    OUT message                    text
 )
 RETURNS SETOF record
 AS 'MODULE_PATHNAME'
