@@ -5,7 +5,7 @@ OBJS = pg_datasentinel.o pgds_linux.o pgds_utils.o
 
 DATA = pg_datasentinel--0.1.0.sql
 
-REGRESS = init autovacuum
+REGRESS = init autovacuum autoanalyze
 REGRESS_OPTS = --temp-config=regress.conf
 USE_PGXS = 1
 

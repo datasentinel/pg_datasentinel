@@ -18,7 +18,6 @@ CREATE VIEW ds_stat_activity AS
 CREATE FUNCTION ds_autovacuum_msgs(
     OUT seq                  int4,
     OUT logged_at            timestamptz,
-    OUT operation            text,
     OUT datname              text,
     OUT schemaname           text,
     OUT relname              text,
@@ -42,6 +41,28 @@ CREATE VIEW ds_autovacuum_activity AS
     SELECT * FROM ds_autovacuum_msgs();
 
 CREATE FUNCTION ds_autovacuum_activity_reset()
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C PARALLEL SAFE;
+
+
+CREATE FUNCTION ds_autoanalyze_msgs(
+    OUT seq        int4,
+    OUT logged_at  timestamptz,
+    OUT datname    text,
+    OUT schemaname text,
+    OUT relname    text,
+    OUT relid      oid,
+    OUT message    text
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_autoanalyze_activity AS
+    SELECT * FROM ds_autoanalyze_msgs();
+
+CREATE FUNCTION ds_autoanalyze_activity_reset()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;

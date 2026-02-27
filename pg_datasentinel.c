@@ -28,10 +28,11 @@ void		_PG_fini(void);
 
 #define PROC_VIRTUAL_FS    "/proc"
 #define DS_STAT_IDS_COLS		4
-#define DS_AUTOVACUUM_COLS		17	/* seq, logged_at, operation, datname, schemaname, relname, relid, message,
+#define DS_AUTOVACUUM_COLS		16	/* seq, logged_at, datname, schemaname, relname, relid,
 								 * heap_blks_total, heap_blks_scanned, heap_blks_vacuumed, index_vacuum_count,
 								 * max_dead_tuple_bytes, dead_tuple_bytes, num_dead_item_ids,
-								 * indexes_total, indexes_processed */
+								 * indexes_total, indexes_processed, message */
+#define DS_ANALYZE_COLS			7	/* seq, logged_at, datname, schemaname, relname, relid, message */
 #define PGDS_MSG_LEN			4096	/* max length of a stored log message */
 
 /*
@@ -41,7 +42,6 @@ void		_PG_fini(void);
 typedef struct PgdsAutovacuumEntry
 {
 	TimestampTz	logged_at;				/* wall-clock time the message was intercepted */
-	char		operation[16];			/* "vacuum" or "analyze" */
 	char		datname[NAMEDATALEN];	/* database name */
 	char		schemaname[NAMEDATALEN];	/* schema name */
 	char		relname[NAMEDATALEN];	/* table name */
@@ -80,6 +80,30 @@ typedef struct PgdsAutovacuumSharedState
 	PgdsAutovacuumEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } PgdsAutovacuumSharedState;
 
+/*
+ * One slot in the analyze ring buffer.
+ * Fixed-size fields only — this struct lives in shared memory.
+ */
+typedef struct PgdsAutoanalyzeEntry
+{
+	TimestampTz	logged_at;				/* wall-clock time the message was intercepted */
+	char		datname[NAMEDATALEN];	/* database name */
+	char		schemaname[NAMEDATALEN];	/* schema name */
+	char		relname[NAMEDATALEN];	/* table name */
+	Oid			reloid;					/* OID of the relation */
+	char		message[PGDS_MSG_LEN];
+} PgdsAutoanalyzeEntry;
+
+typedef struct PgdsAutoanalyzeSharedState
+{
+	LWLock	   *lock;
+	int			head;
+	int			tail;
+	int			count;
+	int			max;
+	PgdsAutoanalyzeEntry entries[FLEXIBLE_ARRAY_MEMBER];
+} PgdsAutoanalyzeSharedState;
+
 /* Saved hook values in case of unload */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static emit_log_hook_type prev_emit_log_hook = NULL;
@@ -87,14 +111,17 @@ static emit_log_hook_type prev_emit_log_hook = NULL;
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
 #endif
 
-/* Pointer to the shared-memory ring buffer;*/
+/* Pointers to the shared-memory ring buffers */
 static PgdsAutovacuumSharedState *pgds_autovacuum = NULL;
+static PgdsAutoanalyzeSharedState    *pgds_autoanalyze = NULL;
 
 static Size pgds_memsize(void);
+static Size pgds_analyze_memsize(void);
 static void pgds_shmem_request(void);
 static void pgds_shmem_startup(void);
 static void pgds_emit_log(ErrorData *edata);
 static void pgds_log_autovacuum(ErrorData *edata);
+static void pgds_log_autoanalyze(ErrorData *edata);
 
 
 static int	max_actions;		/* max # actions to track */
@@ -103,6 +130,8 @@ static bool dump_on_shutdown;	/* whether to save actions across shutdown */
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
 PG_FUNCTION_INFO_V1(ds_autovacuum_activity_reset);
+PG_FUNCTION_INFO_V1(ds_autoanalyze_msgs);
+PG_FUNCTION_INFO_V1(ds_autoanalyze_activity_reset);
 
 
 /*
@@ -143,7 +172,6 @@ ds_autovacuum_msgs(PG_FUNCTION_ARGS)
 		memset(nulls, 0, sizeof(nulls));
 		values[i++] = Int32GetDatum(a + 1);
 		values[i++] = TimestampTzGetDatum(pgds_autovacuum->entries[idx].logged_at);
-		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].operation);
 		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].datname);
 		if (pgds_autovacuum->entries[idx].schemaname[0] != '\0')
 			values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].schemaname);
@@ -157,32 +185,17 @@ ds_autovacuum_msgs(PG_FUNCTION_ARGS)
 			values[i++] = ObjectIdGetDatum(pgds_autovacuum->entries[idx].reloid);
 		else
 			nulls[i++] = true;
-		/* vacuum progress counters: NULL for analyze entries */
-		if (strcmp(pgds_autovacuum->entries[idx].operation, "vacuum") == 0)
-		{
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_total);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_scanned);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_vacuumed);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].index_vacuum_count);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].max_dead_tuple_bytes);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].dead_tuple_bytes);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].num_dead_item_ids);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].indexes_total);
-			values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].indexes_processed);
-		}
-		else
-		{
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-			nulls[i++] = true;
-		}
-  		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].message);
+		/* vacuum progress counters */
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_total);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_scanned);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].heap_blks_vacuumed);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].index_vacuum_count);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].max_dead_tuple_bytes);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].dead_tuple_bytes);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].num_dead_item_ids);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].indexes_total);
+		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].indexes_processed);
+		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].message);
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
 
@@ -210,11 +223,101 @@ ds_autovacuum_activity_reset(PG_FUNCTION_ARGS)
 }
 
 
+/*
+ * ds_analyze_msgs: SRF backing the ds_analyze_activity view.
+ *
+ * Iterates the analyze ring buffer under LW_SHARED and emits one row per
+ * captured autoanalyze LOG message:
+ *   seq        int4        – ordinal position (1 = oldest, count = newest)
+ *   logged_at  timestamptz
+ *   datname    text
+ *   schemaname text
+ *   relname    text
+ *   relid      oid
+ */
+Datum
+ds_autoanalyze_msgs(PG_FUNCTION_ARGS)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	int			count;
+	int			head;
+	int			max;
+	int			a;
+
+	InitMaterializedSRF(fcinfo, 0);
+
+	if (pgds_autoanalyze == NULL)
+		return (Datum) 0;
+
+	LWLockAcquire(pgds_autoanalyze->lock, LW_SHARED);
+
+	count = pgds_autoanalyze->count;
+	head  = pgds_autoanalyze->head;
+	max   = pgds_autoanalyze->max;
+
+	for (a = 0; a < count; a++)
+	{
+		int			idx = (head + a) % max;
+		int			i = 0;
+		Datum		values[DS_ANALYZE_COLS];
+		bool		nulls[DS_ANALYZE_COLS];
+
+		memset(nulls, 0, sizeof(nulls));
+		values[i++] = Int32GetDatum(a + 1);
+		values[i++] = TimestampTzGetDatum(pgds_autoanalyze->entries[idx].logged_at);
+		values[i++] = CStringGetTextDatum(pgds_autoanalyze->entries[idx].datname);
+		if (pgds_autoanalyze->entries[idx].schemaname[0] != '\0')
+			values[i++] = CStringGetTextDatum(pgds_autoanalyze->entries[idx].schemaname);
+		else
+			nulls[i++] = true;
+		if (pgds_autoanalyze->entries[idx].relname[0] != '\0')
+			values[i++] = CStringGetTextDatum(pgds_autoanalyze->entries[idx].relname);
+		else
+			nulls[i++] = true;
+		if (pgds_autoanalyze->entries[idx].reloid != InvalidOid)
+			values[i++] = ObjectIdGetDatum(pgds_autoanalyze->entries[idx].reloid);
+		else
+			nulls[i++] = true;
+		values[i++] = CStringGetTextDatum(pgds_autoanalyze->entries[idx].message);
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	}
+
+	LWLockRelease(pgds_autoanalyze->lock);
+
+	return (Datum) 0;
+}
+
+/*
+ * ds_analyze_activity_reset: discard all entries from the analyze ring buffer.
+ */
+Datum
+ds_autoanalyze_activity_reset(PG_FUNCTION_ARGS)
+{
+	if (pgds_autoanalyze == NULL)
+		PG_RETURN_VOID();
+
+	LWLockAcquire(pgds_autoanalyze->lock, LW_EXCLUSIVE);
+	pgds_autoanalyze->head  = 0;
+	pgds_autoanalyze->tail  = 0;
+	pgds_autoanalyze->count = 0;
+	LWLockRelease(pgds_autoanalyze->lock);
+
+	PG_RETURN_VOID();
+}
+
+
 static Size
 pgds_memsize(void)
 {
 	return add_size(offsetof(PgdsAutovacuumSharedState, entries),
 					mul_size(max_actions, sizeof(PgdsAutovacuumEntry)));
+}
+
+static Size
+pgds_analyze_memsize(void)
+{
+	return add_size(offsetof(PgdsAutoanalyzeSharedState, entries),
+					mul_size(max_actions, sizeof(PgdsAutoanalyzeEntry)));
 }
 
 /*
@@ -228,8 +331,8 @@ pgds_shmem_request(void)
 	if (prev_shmem_request_hook)
 		prev_shmem_request_hook();
 #endif
-	RequestAddinShmemSpace(pgds_memsize());
-	RequestNamedLWLockTranche("pgds", 1);
+	RequestAddinShmemSpace(add_size(pgds_memsize(), pgds_analyze_memsize()));
+	RequestNamedLWLockTranche("pgds", 2);
 }
 
 /*
@@ -248,15 +351,26 @@ pgds_shmem_startup(void)
 
 	LWLockAcquire(AddinShmemInitLock, LW_EXCLUSIVE);
 
-	pgds_autovacuum = ShmemInitStruct("pgds", pgds_memsize(), &found);
+	pgds_autovacuum = ShmemInitStruct("pgds_vacuum", pgds_memsize(), &found);
 	if (!found)
 	{
-		pgds_autovacuum->lock = &(GetNamedLWLockTranche("pgds"))[0].lock;
-		pgds_autovacuum->head = 0;
-		pgds_autovacuum->tail = 0;
+		pgds_autovacuum->lock  = &(GetNamedLWLockTranche("pgds"))[0].lock;
+		pgds_autovacuum->head  = 0;
+		pgds_autovacuum->tail  = 0;
 		pgds_autovacuum->count = 0;
-		pgds_autovacuum->max = max_actions;
+		pgds_autovacuum->max   = max_actions;
 		memset(pgds_autovacuum->entries, 0, mul_size(max_actions, sizeof(PgdsAutovacuumEntry)));
+	}
+
+	pgds_autoanalyze = ShmemInitStruct("pgds_analyze", pgds_analyze_memsize(), &found);
+	if (!found)
+	{
+		pgds_autoanalyze->lock  = &(GetNamedLWLockTranche("pgds"))[1].lock;
+		pgds_autoanalyze->head  = 0;
+		pgds_autoanalyze->tail  = 0;
+		pgds_autoanalyze->count = 0;
+		pgds_autoanalyze->max   = max_actions;
+		memset(pgds_autoanalyze->entries, 0, mul_size(max_actions, sizeof(PgdsAutoanalyzeEntry)));
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -331,7 +445,8 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 
 
 /*
- * Write one autovacuum/autoanalyze log message into the shared ring buffer.
+ * Write one autovacuum log message into the vacuum ring buffer.
+ * Only called for vacuum messages.
  */
 static void
 pgds_log_autovacuum(ErrorData *edata)
@@ -344,12 +459,6 @@ pgds_log_autovacuum(ErrorData *edata)
 
 	pgds_autovacuum->entries[pgds_autovacuum->tail].logged_at = GetCurrentTimestamp();
 
-	if (strstr(edata->message, "vacuum") != NULL)
-		strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].operation, "vacuum",
-				sizeof(pgds_autovacuum->entries[pgds_autovacuum->tail].operation));
-	else
-		strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].operation, "analyze",
-				sizeof(pgds_autovacuum->entries[pgds_autovacuum->tail].operation));
 
 	/* database: resolve the name from the OID (valid in any connected backend) */
 	{
@@ -384,7 +493,7 @@ pgds_log_autovacuum(ErrorData *edata)
 	{
 		PgdsAutovacuumEntry *e = &pgds_autovacuum->entries[pgds_autovacuum->tail];
 
-		if (strstr(edata->message, "vacuum") != NULL && MyBEEntry != NULL)
+		if (MyBEEntry != NULL)
 		{
 			e->heap_blks_total      = MyBEEntry->st_progress_param[1];
 			e->heap_blks_scanned    = MyBEEntry->st_progress_param[2];
@@ -423,7 +532,53 @@ pgds_log_autovacuum(ErrorData *edata)
 
 
 /*
+ * Write one autoanalyze log message into the analyze ring buffer.
+ */
+static void
+pgds_log_autoanalyze(ErrorData *edata)
+{
+	LWLockAcquire(pgds_autoanalyze->lock, LW_EXCLUSIVE);
+
+	pgds_autoanalyze->entries[pgds_autoanalyze->tail].logged_at = GetCurrentTimestamp();
+
+	{
+		const char *dbname = get_database_name(MyDatabaseId);
+
+		strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].datname,
+				dbname ? dbname : "",
+				NAMEDATALEN);
+	}
+
+	pgds_parse_table_from_message(edata->message,
+							 pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
+							 pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname);
+
+	{
+		Oid			nsoid = get_namespace_oid(
+										pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
+										true /* missing_ok */ );
+
+		pgds_autoanalyze->entries[pgds_autoanalyze->tail].reloid =
+			(nsoid != InvalidOid)
+			? get_relname_relid(pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname, nsoid)
+			: InvalidOid;
+	}
+
+	strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].message,
+			edata->message, PGDS_MSG_LEN);
+	pgds_autoanalyze->tail = (pgds_autoanalyze->tail + 1) % pgds_autoanalyze->max;
+	if (pgds_autoanalyze->count < pgds_autoanalyze->max)
+		pgds_autoanalyze->count++;
+	else
+		pgds_autoanalyze->head = (pgds_autoanalyze->head + 1) % pgds_autoanalyze->max;
+
+	LWLockRelease(pgds_autoanalyze->lock);
+}
+
+
+/*
  * emit_log_hook: intercepts every log message emitted by the backend.
+ * Routes vacuum messages to pgds_autovacuum and analyze messages to pgds_analyze.
  */
 static void
 pgds_emit_log(ErrorData *edata)
@@ -431,11 +586,6 @@ pgds_emit_log(ErrorData *edata)
 	/* Always chain to any previously installed hook */
 	if (prev_emit_log_hook)
 		prev_emit_log_hook(edata);
-
-
-	/* Shared memory is only available when loaded via shared_preload_libraries */
-	if (pgds_autovacuum == NULL)
-		return;
 
 	/* Only interested in LOG-level messages going to the server log */
 	if (edata->elevel != LOG || !edata->output_to_server)
@@ -446,12 +596,17 @@ pgds_emit_log(ErrorData *edata)
 
 	if (strstr(edata->message, "automatic") == NULL)
 		return;
-	
-	if (strstr(edata->message, "vacuum") == NULL &&
-		strstr(edata->message, "analyze") == NULL)
-		return;
 
-	pgds_log_autovacuum(edata);
+	if (strstr(edata->message, "vacuum") != NULL)
+	{
+		if (pgds_autovacuum != NULL)
+			pgds_log_autovacuum(edata);
+	}
+	else if (strstr(edata->message, "analyze") != NULL)
+	{
+		if (pgds_autoanalyze != NULL)
+			pgds_log_autoanalyze(edata);
+	}
 }
 
 
