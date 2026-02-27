@@ -32,7 +32,9 @@ void		_PG_fini(void);
 								 * heap_blks_total, heap_blks_scanned, heap_blks_vacuumed, index_vacuum_count,
 								 * max_dead_tuple_bytes, dead_tuple_bytes, num_dead_item_ids,
 								 * indexes_total, indexes_processed, message */
-#define DS_ANALYZE_COLS			7	/* seq, logged_at, datname, schemaname, relname, relid, message */
+#define DS_ANALYZE_COLS			14	/* seq, logged_at, datname, schemaname, relname, relid,
+								 * sample_blks_total, sample_blks_scanned, ext_stats_total, ext_stats_computed,
+								 * child_tables_total, child_tables_done, current_child_table_relid, message */
 #define PGDS_MSG_LEN			4096	/* max length of a stored log message */
 
 /*
@@ -91,6 +93,14 @@ typedef struct PgdsAutoanalyzeEntry
 	char		schemaname[NAMEDATALEN];	/* schema name */
 	char		relname[NAMEDATALEN];	/* table name */
 	Oid			reloid;					/* OID of the relation */
+	/* analyze progress counters (from pg_stat_progress_analyze param2..param8) */
+	int64		sample_blks_total;
+	int64		sample_blks_scanned;
+	int64		ext_stats_total;
+	int64		ext_stats_computed;
+	int64		child_tables_total;
+	int64		child_tables_done;
+	Oid			current_child_table_relid;
 	char		message[PGDS_MSG_LEN];
 } PgdsAutoanalyzeEntry;
 
@@ -276,6 +286,17 @@ ds_autoanalyze_msgs(PG_FUNCTION_ARGS)
 			nulls[i++] = true;
 		if (pgds_autoanalyze->entries[idx].reloid != InvalidOid)
 			values[i++] = ObjectIdGetDatum(pgds_autoanalyze->entries[idx].reloid);
+		else
+			nulls[i++] = true;
+		/* analyze progress counters */
+		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].sample_blks_total);
+		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].sample_blks_scanned);
+		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].ext_stats_total);
+		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].ext_stats_computed);
+		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].child_tables_total);
+		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].child_tables_done);
+		if (pgds_autoanalyze->entries[idx].current_child_table_relid != InvalidOid)
+			values[i++] = ObjectIdGetDatum(pgds_autoanalyze->entries[idx].current_child_table_relid);
 		else
 			nulls[i++] = true;
 		values[i++] = CStringGetTextDatum(pgds_autoanalyze->entries[idx].message);
@@ -562,6 +583,35 @@ pgds_log_autoanalyze(ErrorData *edata)
 			(nsoid != InvalidOid)
 			? get_relname_relid(pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname, nsoid)
 			: InvalidOid;
+	}
+
+	/*
+	 * Capture analyze progress counters from the backend's own status entry.
+	 * pgstat_progress_end_command() leaves st_progress_param intact.
+	 */
+	{
+		PgdsAutoanalyzeEntry *e = &pgds_autoanalyze->entries[pgds_autoanalyze->tail];
+
+		if (MyBEEntry != NULL)
+		{
+			e->sample_blks_total          = MyBEEntry->st_progress_param[1];
+			e->sample_blks_scanned        = MyBEEntry->st_progress_param[2];
+			e->ext_stats_total            = MyBEEntry->st_progress_param[3];
+			e->ext_stats_computed         = MyBEEntry->st_progress_param[4];
+			e->child_tables_total         = MyBEEntry->st_progress_param[5];
+			e->child_tables_done          = MyBEEntry->st_progress_param[6];
+			e->current_child_table_relid  = (Oid) MyBEEntry->st_progress_param[7];
+		}
+		else
+		{
+			e->sample_blks_total          = 0;
+			e->sample_blks_scanned        = 0;
+			e->ext_stats_total            = 0;
+			e->ext_stats_computed         = 0;
+			e->child_tables_total         = 0;
+			e->child_tables_done          = 0;
+			e->current_child_table_relid  = InvalidOid;
+		}
 	}
 
 	strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].message,
