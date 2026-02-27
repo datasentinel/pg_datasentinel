@@ -113,7 +113,7 @@ static shmem_request_hook_type prev_shmem_request_hook = NULL;
 
 /* Pointers to the shared-memory ring buffers */
 static PgdsAutovacuumSharedState *pgds_autovacuum = NULL;
-static PgdsAutoanalyzeSharedState    *pgds_autoanalyze = NULL;
+static PgdsAutoanalyzeSharedState *pgds_autoanalyze = NULL;
 
 static Size pgds_memsize(void);
 static Size pgds_analyze_memsize(void);
