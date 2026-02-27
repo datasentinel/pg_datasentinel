@@ -578,7 +578,7 @@ pgds_log_autoanalyze(ErrorData *edata)
 
 /*
  * emit_log_hook: intercepts every log message emitted by the backend.
- * Routes vacuum messages to pgds_autovacuum and analyze messages to pgds_analyze.
+ * Routes vacuum messages to pgds_autovacuum and analyze messages to pgds_autoanalyze.
  */
 static void
 pgds_emit_log(ErrorData *edata)
