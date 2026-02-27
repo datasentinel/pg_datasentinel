@@ -1,10 +1,3 @@
--- Wait for autovacuum to run.
-SELECT pg_sleep(5);
- pg_sleep 
-----------
- 
-(1 row)
-
 -- Verify the view is queryable and returns the expected columns.
 SELECT
     count(seq IS NOT NULL) AS has_seq,
@@ -14,19 +7,19 @@ SELECT
     count(relname       IS NOT NULL) AS has_relname,
     count(relid         IS NOT NULL) AS has_relid,
     count(message       IS NOT NULL) AS has_message
-FROM ds_autovacuum_activity where message ~* 'test_av';
+FROM ds_autoanalyze_activity where message ~* 'test_av';
  has_seq | has_logged_at | has_datname | has_schemaname | has_relname | has_relid | has_message 
 ---------+---------------+-------------+----------------+-------------+-----------+-------------
        1 |             1 |           1 |              1 |           1 |         1 |           1
 (1 row)
 
-select ds_autovacuum_activity_reset();
- ds_autovacuum_activity_reset 
-------------------------------
+select ds_autoanalyze_activity_reset();
+ ds_autoanalyze_activity_reset 
+-------------------------------
  
 (1 row)
 
-select count(*) from ds_autovacuum_activity where message ~* 'test_av';
+select count(*) from ds_autoanalyze_activity where message ~* 'test_av';
  count 
 -------
      0
