@@ -450,10 +450,10 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 		}
 
 #if PG_VERSION_NUM >= 180000
-		if (queryDesc != NULL && queryDesc->plannedstmt != NULL)
-			values[i++] = Int64GetDatum(queryDesc->plannedstmt->planId);
-		else
+		if (beentry->st_plan_id == 0)
 			nulls[i++] = true;
+		else
+			values[i++] = UInt64GetDatum(beentry->st_plan_id);
 #else
 		nulls[i++] = true;
 #endif
