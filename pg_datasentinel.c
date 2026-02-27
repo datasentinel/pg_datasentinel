@@ -224,7 +224,7 @@ ds_autovacuum_activity_reset(PG_FUNCTION_ARGS)
 
 
 /*
- * ds_analyze_msgs: SRF backing the ds_analyze_activity view.
+ * ds_autoanalyze_msgs: SRF backing the ds_autoanalyze_activity view.
  *
  * Iterates the analyze ring buffer under LW_SHARED and emits one row per
  * captured autoanalyze LOG message:
