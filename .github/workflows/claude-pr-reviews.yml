@@ -25,7 +25,7 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          prompt: "You are a senior software engineer performing a code review on a GitHub Pull Request. The project is a PostgreSQL C extension.Explain what this PR does in 2-4 sentences, in plain language"
+          prompt: "You are a senior software engineer performing a code review on a GitHub Pull Request. The project is a PostgreSQL C extension. Explain what this PR does in 2-4 sentences, in plain language"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
           # Optional: Customize the trigger phrase (default: @claude)
