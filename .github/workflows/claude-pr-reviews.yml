@@ -1,18 +1,12 @@
 name: Claude Code
 
 on:
-  pull_request_review_comment:
-    types: [created]
-  pull_request_review:
-    types: [submitted]
   pull_request:
-    types: [opened]
+    types: [opened, synchronize, reopened]
 
 jobs:
   claude:
     if: |
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude'))  ||
       (github.event_name == 'pull_request') 
     runs-on: ubuntu-latest
     permissions:
@@ -23,7 +17,7 @@ jobs:
       actions: read # Required for Claude to read CI results on PRs
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 1
 
@@ -31,7 +25,7 @@ jobs:
         id: claude
         uses: anthropics/claude-code-action@v1
         with:
-          prompt: "Review this PR and look for bugs and security issues. Also explain the pull request target"
+          prompt: "You are a senior software engineer performing a code review on a GitHub Pull Request. The project is a PostgreSQL C extension. Explain what this PR does in 2-4 sentences, in plain language"
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
 
           # Optional: Customize the trigger phrase (default: @claude)
