@@ -3,9 +3,9 @@ SET client_min_messages = WARNING;
 CREATE EXTENSION pg_datasentinel;
 -- Load test extension
 CREATE EXTENSION test_pg_datasentinel_internals;
--- Test parse_table_from_message() from pgds_utils.c
-SELECT test_pgds_utils();
-                        test_pgds_utils                        
+-- Test pgds_parse_table_from_message() from pgds_utils.c
+SELECT test_pgds_parse_table_from_message();
+               test_pgds_parse_table_from_message                
 -----------------------------------------------------------------
  Test: vacuum: schemaname = public                          PASS+
  Test: vacuum: relname = mytable                            PASS+
@@ -21,6 +21,40 @@ SELECT test_pgds_utils();
  Test: missing close quote: relname is empty                PASS+
  Test: one dot: schemaname is empty                         PASS+
  Test: one dot: relname is empty                            PASS+
+                                                                +
+ All tests PASSED                                               +
+ 
+(1 row)
+
+-- Test pgds_parse_vacuum_stats() and match_to_int64() from pgds_utils.c
+SELECT test_pgds_parse_vacuum_stats();
+                  test_pgds_parse_vacuum_stats                   
+-----------------------------------------------------------------
+ Test: full msg: pages_removed = 0                          PASS+
+ Test: full msg: pages_remain = 236                         PASS+
+ Test: full msg: pages_scanned = 236                        PASS+
+ Test: full msg: tuples_removed = 6057                      PASS+
+ Test: full msg: tuples_remain = 1053                       PASS+
+ Test: no lines: pages_removed = 0                          PASS+
+ Test: no lines: pages_remain = 0                           PASS+
+ Test: no lines: pages_scanned = 0                          PASS+
+ Test: no lines: tuples_removed = 0                         PASS+
+ Test: no lines: tuples_remain = 0                          PASS+
+ Test: pages only: pages_removed = 10                       PASS+
+ Test: pages only: pages_remain = 500                       PASS+
+ Test: pages only: pages_scanned = 510                      PASS+
+ Test: pages only: tuples_removed = 0                       PASS+
+ Test: pages only: tuples_remain = 0                        PASS+
+ Test: tuples only: pages_removed = 0                       PASS+
+ Test: tuples only: pages_remain = 0                        PASS+
+ Test: tuples only: pages_scanned = 0                       PASS+
+ Test: tuples only: tuples_removed = 100                    PASS+
+ Test: tuples only: tuples_remain = 200                     PASS+
+ Test: large: pages_removed = 1000000                       PASS+
+ Test: large: pages_remain = 9999999                        PASS+
+ Test: large: pages_scanned = 10999999                      PASS+
+ Test: large: tuples_removed = 5000000                      PASS+
+ Test: large: tuples_remain = 3000000                       PASS+
                                                                 +
  All tests PASSED                                               +
  
