@@ -6,8 +6,11 @@ CREATE EXTENSION pg_datasentinel;
 -- Load test extension
 CREATE EXTENSION test_pg_datasentinel_internals;
 
--- Test parse_table_from_message() from pgds_utils.c
-SELECT test_pgds_utils();
+-- Test pgds_parse_table_from_message() from pgds_utils.c
+SELECT test_pgds_parse_table_from_message();
+
+-- Test pgds_parse_vacuum_stats() and match_to_int64() from pgds_utils.c
+SELECT test_pgds_parse_vacuum_stats();
 
 -- Cleanup
 DROP EXTENSION test_pg_datasentinel_internals;

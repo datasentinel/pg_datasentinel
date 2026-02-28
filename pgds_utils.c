@@ -1,5 +1,7 @@
 #include "postgres.h"
 #include "catalog/pg_type.h"
+#include <regex.h>
+#include <stdlib.h>
 
 #include "pgds_utils.h"
 
@@ -56,4 +58,74 @@ pgds_parse_table_from_message(const char *message, char *schemaname, char *relna
 		len = NAMEDATALEN - 1;
 	memcpy(relname, dot2, len);
 	relname[len] = '\0';
+}
+
+/*
+ * Copy a regex sub-match into a temporary buffer and convert it to int64.
+ */
+static int64
+match_to_int64(const char *str, regmatch_t *pm, int n)
+{
+	char	buf[32];
+	int		len = pm[n].rm_eo - pm[n].rm_so;
+
+	if (len > (int) sizeof(buf) - 1)
+		len = sizeof(buf) - 1;
+	memcpy(buf, str + pm[n].rm_so, len);
+	buf[len] = '\0';
+	return (int64) strtoll(buf, NULL, 10);
+}
+
+/*
+ * Parse numeric fields from an autovacuum LOG message.
+ *
+ * Extracts:
+ *   pages  line: "pages: N removed, N remain, N scanned ..."
+ *   tuples line: "tuples: N removed, N remain ..."
+ *
+ * Patterns are compiled once per process (static) for efficiency.
+ * All output parameters are set to 0 when the pattern is not found.
+ */
+void
+pgds_parse_vacuum_stats(const char *message,
+						int64 *pages_removed,
+						int64 *pages_remain,
+						int64 *pages_scanned,
+						int64 *tuples_removed,
+						int64 *tuples_remain)
+{
+	static regex_t	re_pages;
+	static regex_t	re_tuples;
+	static bool		initialized = false;
+	regmatch_t		pm[4];
+
+	*pages_removed  = 0;
+	*pages_remain   = 0;
+	*pages_scanned  = 0;
+	*tuples_removed = 0;
+	*tuples_remain  = 0;
+
+	if (!initialized)
+	{
+		regcomp(&re_pages,
+				"^pages: ([0-9]+) removed, ([0-9]+) remain, ([0-9]+) scanned",
+				REG_EXTENDED | REG_NEWLINE);
+		regcomp(&re_tuples,
+				"^tuples: ([0-9]+) removed, ([0-9]+) remain",
+				REG_EXTENDED | REG_NEWLINE);
+		initialized = true;
+	}
+
+	if (regexec(&re_pages, message, 4, pm, 0) == 0)
+	{
+		*pages_removed = match_to_int64(message, pm, 1);
+		*pages_remain  = match_to_int64(message, pm, 2);
+		*pages_scanned = match_to_int64(message, pm, 3);
+	}
+
+	if (regexec(&re_tuples, message, 3, pm, 0) == 0)
+	{
+		*tuples_removed = match_to_int64(message, pm, 1);
+		*tuples_remain  = match_to_int64(message, pm, 2);
+	}
 }

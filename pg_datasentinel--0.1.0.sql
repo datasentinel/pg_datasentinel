@@ -22,15 +22,12 @@ CREATE FUNCTION ds_autovacuum_msgs(
     OUT schemaname           text,
     OUT relname              text,
     OUT relid                oid,
-    OUT heap_blks_total      int8,
-    OUT heap_blks_scanned    int8,
-    OUT heap_blks_vacuumed   int8,
-    OUT index_vacuum_count   int8,
-    OUT max_dead_tuple_bytes int8,
-    OUT dead_tuple_bytes     int8,
-    OUT num_dead_item_ids    int8,
-    OUT indexes_total        int8,
-    OUT indexes_processed    int8,
+    OUT heap_pages           int8,
+    OUT pages_removed        int8,
+    OUT pages_remain         int8,
+    OUT pages_scanned        int8,
+    OUT tuples_removed       int8,
+    OUT tuples_remain        int8,
     OUT message              text
 )
 RETURNS SETOF record
