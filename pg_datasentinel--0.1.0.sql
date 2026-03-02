@@ -66,3 +66,25 @@ CREATE FUNCTION ds_autoanalyze_activity_reset()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
+
+
+CREATE FUNCTION ds_tempfile_msgs(
+    OUT seq       int4,
+    OUT logged_at timestamptz,
+    OUT datname   text,
+    OUT username  text,
+    OUT pid       int4,
+    OUT bytes     int8,
+    OUT message   text
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_tempfile_activity AS
+    SELECT * FROM ds_tempfile_msgs();
+
+CREATE FUNCTION ds_tempfile_activity_reset()
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C PARALLEL SAFE;

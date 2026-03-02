@@ -14,6 +14,7 @@
 #include "nodes/makefuncs.h"
 #include "utils/timestamp.h"
 #include "commands/dbcommands.h"
+#include "utils/acl.h"
 #include "catalog/namespace.h"
 #include "utils/lsyscache.h"
 #include "tcop/utility.h"
@@ -35,6 +36,8 @@ void		_PG_fini(void);
 								 * sample_blks_total, ext_stats_total, child_tables_total, message */
 #define PGDS_AUTOVACUUM_MSG_LEN	3072	/* max length of a stored autovacuum log message */
 #define PGDS_AUTOANALYZE_MSG_LEN	1024	/* max length of a stored autoanalyze log message */
+#define DS_TEMPFILE_COLS		7		/* seq, logged_at, datname, username, pid, bytes, message */
+#define PGDS_TEMPFILE_MSG_LEN	512		/* max length of a stored temp file log message */
 
 /*
  * One slot in the ring buffer.
@@ -107,6 +110,31 @@ typedef struct PgdsAutoanalyzeSharedState
 	PgdsAutoanalyzeEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } PgdsAutoanalyzeSharedState;
 
+/*
+ * One slot in the temp-file ring buffer.
+ * Captures each LOG message emitted when a temporary file is deleted
+ * (controlled by log_temp_files).
+ */
+typedef struct PgdsTempfileEntry
+{
+	TimestampTz	logged_at;				/* wall-clock time the message was intercepted */
+	char		datname[NAMEDATALEN];	/* database name */
+	char		username[NAMEDATALEN];	/* role name */
+	int			pid;					/* backend PID */
+	int64		bytes;					/* temp file size in bytes */
+	char		message[PGDS_TEMPFILE_MSG_LEN];
+} PgdsTempfileEntry;
+
+typedef struct PgdsTempfileSharedState
+{
+	LWLock	   *lock;
+	int			head;
+	int			tail;
+	int			count;
+	int			max;
+	PgdsTempfileEntry entries[FLEXIBLE_ARRAY_MEMBER];
+} PgdsTempfileSharedState;
+
 /* Saved hook values in case of unload */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static emit_log_hook_type prev_emit_log_hook = NULL;
@@ -117,14 +145,17 @@ static shmem_request_hook_type prev_shmem_request_hook = NULL;
 /* Pointers to the shared-memory ring buffers */
 static PgdsAutovacuumSharedState *pgds_autovacuum = NULL;
 static PgdsAutoanalyzeSharedState *pgds_autoanalyze = NULL;
+static PgdsTempfileSharedState *pgds_tempfile = NULL;
 
 static Size pgds_memsize(void);
 static Size pgds_analyze_memsize(void);
+static Size pgds_tempfile_memsize(void);
 static void pgds_shmem_request(void);
 static void pgds_shmem_startup(void);
 static void pgds_emit_log(ErrorData *edata);
 static void pgds_log_autovacuum(ErrorData *edata);
 static void pgds_log_autoanalyze(ErrorData *edata);
+static void pgds_log_tempfile(ErrorData *edata);
 
 
 static int	max_actions;		/* max # actions to track */
@@ -135,6 +166,8 @@ PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
 PG_FUNCTION_INFO_V1(ds_autovacuum_activity_reset);
 PG_FUNCTION_INFO_V1(ds_autoanalyze_msgs);
 PG_FUNCTION_INFO_V1(ds_autoanalyze_activity_reset);
+PG_FUNCTION_INFO_V1(ds_tempfile_msgs);
+PG_FUNCTION_INFO_V1(ds_tempfile_activity_reset);
 
 
 /*
@@ -311,6 +344,81 @@ ds_autoanalyze_activity_reset(PG_FUNCTION_ARGS)
 }
 
 
+/*
+ * ds_tempfile_msgs: SRF backing the ds_tempfile_activity view.
+ *
+ * Iterates the temp-file ring buffer under LW_SHARED and emits one row per
+ * captured temporary-file LOG message:
+ *   seq       int4        – ordinal position (1 = oldest, count = newest)
+ *   logged_at timestamptz
+ *   datname   text
+ *   username  text
+ *   pid       int4
+ *   bytes     int8
+ *   message   text
+ */
+Datum
+ds_tempfile_msgs(PG_FUNCTION_ARGS)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	int			count;
+	int			head;
+	int			max;
+	int			a;
+
+	InitMaterializedSRF(fcinfo, 0);
+
+	if (pgds_tempfile == NULL)
+		return (Datum) 0;
+
+	LWLockAcquire(pgds_tempfile->lock, LW_SHARED);
+
+	count = pgds_tempfile->count;
+	head  = pgds_tempfile->head;
+	max   = pgds_tempfile->max;
+
+	for (a = 0; a < count; a++)
+	{
+		int			idx = (head + a) % max;
+		int			i = 0;
+		Datum		values[DS_TEMPFILE_COLS];
+		bool		nulls[DS_TEMPFILE_COLS];
+
+		memset(nulls, 0, sizeof(nulls));
+		values[i++] = Int32GetDatum(a + 1);
+		values[i++] = TimestampTzGetDatum(pgds_tempfile->entries[idx].logged_at);
+		values[i++] = CStringGetTextDatum(pgds_tempfile->entries[idx].datname);
+		values[i++] = CStringGetTextDatum(pgds_tempfile->entries[idx].username);
+		values[i++] = Int32GetDatum(pgds_tempfile->entries[idx].pid);
+		values[i++] = Int64GetDatum(pgds_tempfile->entries[idx].bytes);
+		values[i++] = CStringGetTextDatum(pgds_tempfile->entries[idx].message);
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	}
+
+	LWLockRelease(pgds_tempfile->lock);
+
+	return (Datum) 0;
+}
+
+/*
+ * ds_tempfile_activity_reset: discard all entries from the temp-file ring buffer.
+ */
+Datum
+ds_tempfile_activity_reset(PG_FUNCTION_ARGS)
+{
+	if (pgds_tempfile == NULL)
+		PG_RETURN_VOID();
+
+	LWLockAcquire(pgds_tempfile->lock, LW_EXCLUSIVE);
+	pgds_tempfile->head  = 0;
+	pgds_tempfile->tail  = 0;
+	pgds_tempfile->count = 0;
+	LWLockRelease(pgds_tempfile->lock);
+
+	PG_RETURN_VOID();
+}
+
+
 static Size
 pgds_memsize(void)
 {
@@ -325,6 +433,13 @@ pgds_analyze_memsize(void)
 					mul_size(max_actions, sizeof(PgdsAutoanalyzeEntry)));
 }
 
+static Size
+pgds_tempfile_memsize(void)
+{
+	return add_size(offsetof(PgdsTempfileSharedState, entries),
+					mul_size(max_actions, sizeof(PgdsTempfileEntry)));
+}
+
 /*
  * pgds_shmem_request: request shared memory to the core.
  * Called as a hook in PG15 or later, otherwise called from _PG_init().
@@ -336,8 +451,9 @@ pgds_shmem_request(void)
 	if (prev_shmem_request_hook)
 		prev_shmem_request_hook();
 #endif
-	RequestAddinShmemSpace(add_size(pgds_memsize(), pgds_analyze_memsize()));
-	RequestNamedLWLockTranche("pgds", 2);
+	RequestAddinShmemSpace(add_size(add_size(pgds_memsize(), pgds_analyze_memsize()),
+								   pgds_tempfile_memsize()));
+	RequestNamedLWLockTranche("pgds", 3);
 }
 
 /*
@@ -376,6 +492,17 @@ pgds_shmem_startup(void)
 		pgds_autoanalyze->count = 0;
 		pgds_autoanalyze->max   = max_actions;
 		memset(pgds_autoanalyze->entries, 0, mul_size(max_actions, sizeof(PgdsAutoanalyzeEntry)));
+	}
+
+	pgds_tempfile = ShmemInitStruct("pgds_tempfile", pgds_tempfile_memsize(), &found);
+	if (!found)
+	{
+		pgds_tempfile->lock  = &(GetNamedLWLockTranche("pgds"))[2].lock;
+		pgds_tempfile->head  = 0;
+		pgds_tempfile->tail  = 0;
+		pgds_tempfile->count = 0;
+		pgds_tempfile->max   = max_actions;
+		memset(pgds_tempfile->entries, 0, mul_size(max_actions, sizeof(PgdsTempfileEntry)));
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -585,8 +712,58 @@ pgds_log_autoanalyze(ErrorData *edata)
 
 
 /*
+ * Write one temporary-file log message into the temp-file ring buffer.
+ *
+ * Only called when edata->message_id matches the known temp-file format string,
+ * so we can safely extract the size as the last whitespace-delimited token of
+ * edata->message regardless of the server locale.
+ */
+static void
+pgds_log_tempfile(ErrorData *edata)
+{
+	PgdsTempfileEntry *e;
+	const char *p;
+
+	LWLockAcquire(pgds_tempfile->lock, LW_EXCLUSIVE);
+
+	e = &pgds_tempfile->entries[pgds_tempfile->tail];
+
+	e->logged_at = GetCurrentTimestamp();
+
+	{
+		const char *dbname = get_database_name(MyDatabaseId);
+
+		strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
+	}
+
+	{
+		const char *rolname = GetUserNameFromId(GetUserId(), true);
+
+		strlcpy(e->username, rolname ? rolname : "", NAMEDATALEN);
+	}
+
+	e->pid = MyProcPid;
+
+	/* size is the last token in the (translated) message */
+	p = strrchr(edata->message_id, ' ');
+	e->bytes = (p != NULL) ? (int64) strtoll(p + 1, NULL, 10) : 0;
+
+	strlcpy(e->message, edata->message_id, PGDS_TEMPFILE_MSG_LEN);
+
+	pgds_tempfile->tail = (pgds_tempfile->tail + 1) % pgds_tempfile->max;
+	if (pgds_tempfile->count < pgds_tempfile->max)
+		pgds_tempfile->count++;
+	else
+		pgds_tempfile->head = (pgds_tempfile->head + 1) % pgds_tempfile->max;
+
+	LWLockRelease(pgds_tempfile->lock);
+}
+
+
+/*
  * emit_log_hook: intercepts every log message emitted by the backend.
- * Routes vacuum messages to pgds_autovacuum and analyze messages to pgds_autoanalyze.
+ * Routes vacuum messages to pgds_autovacuum, analyze messages to
+ * pgds_autoanalyze, and temporary-file messages to pgds_tempfile.
  */
 static void
 pgds_emit_log(ErrorData *edata)
@@ -601,6 +778,15 @@ pgds_emit_log(ErrorData *edata)
 
 	if (edata->message == NULL)
 		return;
+
+	/* Route temporary-file messages via message_id */
+	if (edata->message_id != NULL &&
+		strcmp(edata->message_id, "temporary file: path \"%s\", size %lu") == 0)
+	{
+		if (pgds_tempfile != NULL)
+			pgds_log_tempfile(edata);
+		return;
+	}
 
 	if (strstr(edata->message, "automatic") == NULL)
 		return;
