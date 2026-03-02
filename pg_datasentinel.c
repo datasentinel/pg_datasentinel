@@ -167,7 +167,6 @@ static void pgds_log_tempfile(ErrorData *edata);
 
 
 static int	max_actions;		/* max # actions to track */
-static bool dump_on_shutdown;	/* whether to save actions across shutdown */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
@@ -857,17 +856,6 @@ _PG_init(void)
 							NULL,
 							NULL,
 							NULL);
-	DefineCustomBoolVariable("pg_datasentinel.save",
-							 "Save pg_datasentinel actions across server shutdowns.",
-							 NULL,
-							 &dump_on_shutdown,
-							 true,
-							 PGC_SIGHUP,
-							 0,
-							 NULL,
-							 NULL,
-							 NULL);
-
 #if PG_VERSION_NUM < 150000
 	pgds_shmem_request();
 #endif
