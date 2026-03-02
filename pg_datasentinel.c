@@ -28,11 +28,12 @@ void		_PG_fini(void);
 
 #define PROC_VIRTUAL_FS    "/proc"
 #define DS_STAT_IDS_COLS		4
-#define DS_AUTOVACUUM_COLS		13	/* seq, logged_at, datname, schemaname, relname, relid,
+#define DS_AUTOVACUUM_COLS		16	/* seq, logged_at, datname, schemaname, relname, relid,
 								 * heap_pages, pages_removed, pages_remain, pages_scanned,
-								 * tuples_removed, tuples_remain, message */
-#define DS_ANALYZE_COLS			10	/* seq, logged_at, datname, schemaname, relname, relid,
-								 * sample_blks_total, ext_stats_total, child_tables_total, message */
+								 * tuples_removed, tuples_remain, user_cpu, sys_cpu, elapsed, message */
+#define DS_ANALYZE_COLS			13	/* seq, logged_at, datname, schemaname, relname, relid,
+								 * sample_blks_total, ext_stats_total, child_tables_total,
+								 * user_cpu, sys_cpu, elapsed, message */
 #define PGDS_AUTOVACUUM_MSG_LEN	3072	/* max length of a stored autovacuum log message */
 #define PGDS_AUTOANALYZE_MSG_LEN	1024	/* max length of a stored autoanalyze log message */
 
@@ -55,6 +56,10 @@ typedef struct PgdsAutovacuumEntry
 	int64		pages_scanned;
 	int64		tuples_removed;
 	int64		tuples_remain;
+	/* CPU timings parsed from the log message */
+	double		user_cpu;
+	double		sys_cpu;
+	double		elapsed;
 	char		message[PGDS_AUTOVACUUM_MSG_LEN];
 } PgdsAutovacuumEntry;
 
@@ -94,6 +99,10 @@ typedef struct PgdsAutoanalyzeEntry
 	int64		sample_blks_total;
 	int64		ext_stats_total;
 	int64		child_tables_total;
+	/* CPU timings parsed from the log message */
+	double		user_cpu;
+	double		sys_cpu;
+	double		elapsed;
 	char		message[PGDS_AUTOANALYZE_MSG_LEN];
 } PgdsAutoanalyzeEntry;
 
@@ -196,6 +205,10 @@ ds_autovacuum_msgs(PG_FUNCTION_ARGS)
 		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].pages_scanned);
 		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].tuples_removed);
 		values[i++] = Int64GetDatum(pgds_autovacuum->entries[idx].tuples_remain);
+		/* CPU timings */
+		values[i++] = Float8GetDatum(pgds_autovacuum->entries[idx].user_cpu);
+		values[i++] = Float8GetDatum(pgds_autovacuum->entries[idx].sys_cpu);
+		values[i++] = Float8GetDatum(pgds_autovacuum->entries[idx].elapsed);
 		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].message);
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
@@ -283,6 +296,10 @@ ds_autoanalyze_msgs(PG_FUNCTION_ARGS)
 		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].sample_blks_total);
 		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].ext_stats_total);
 		values[i++] = Int64GetDatum(pgds_autoanalyze->entries[idx].child_tables_total);
+		/* CPU timings */
+		values[i++] = Float8GetDatum(pgds_autoanalyze->entries[idx].user_cpu);
+		values[i++] = Float8GetDatum(pgds_autoanalyze->entries[idx].sys_cpu);
+		values[i++] = Float8GetDatum(pgds_autoanalyze->entries[idx].elapsed);
 		values[i++] = CStringGetTextDatum(pgds_autoanalyze->entries[idx].message);
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
@@ -504,6 +521,10 @@ pgds_log_autovacuum(ErrorData *edata)
 								&e->pages_scanned,
 								&e->tuples_removed,
 								&e->tuples_remain);
+		pgds_parse_cpu_stats(edata->message,
+							 &e->user_cpu,
+							 &e->sys_cpu,
+							 &e->elapsed);
 	}
 
 	strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].message,
@@ -570,6 +591,10 @@ pgds_log_autoanalyze(ErrorData *edata)
 			e->ext_stats_total            = 0;
 			e->child_tables_total         = 0;
 		}
+		pgds_parse_cpu_stats(edata->message,
+							 &e->user_cpu,
+							 &e->sys_cpu,
+							 &e->elapsed);
 	}
 
 	strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].message,

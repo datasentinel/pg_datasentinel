@@ -9,6 +9,7 @@ PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(test_pgds_parse_table_from_message);
 PG_FUNCTION_INFO_V1(test_pgds_parse_vacuum_stats);
+PG_FUNCTION_INFO_V1(test_pgds_parse_cpu_stats);
 
 #define PASS_FAIL(cond)   ((cond) ? "PASS" : "FAIL")
 #define TEST(desc, cond) \
@@ -16,6 +17,7 @@ PG_FUNCTION_INFO_V1(test_pgds_parse_vacuum_stats);
 		appendStringInfo(&buf, "Test: %-52s %s\n", (desc), PASS_FAIL(cond)); \
 		if (!(cond)) failures++; \
 	} while (0)
+#define FLOAT_EQ(a, b)   (((a) - (b)) < 1e-6 && ((b) - (a)) < 1e-6)
 
 Datum
 test_pgds_parse_table_from_message(PG_FUNCTION_ARGS)
@@ -199,6 +201,111 @@ test_pgds_parse_vacuum_stats(PG_FUNCTION_ARGS)
 		TEST("large: pages_scanned = 10999999", pages_scanned == 10999999);
 		TEST("large: tuples_removed = 5000000", tuples_removed == 5000000);
 		TEST("large: tuples_remain = 3000000",  tuples_remain == 3000000);
+	}
+
+	appendStringInfo(&buf, "\n%s\n",
+					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+}
+
+/*
+ * test_pgds_parse_cpu_stats
+ *
+ * Unit tests for pgds_parse_cpu_stats() and, indirectly, match_to_double()
+ * from pgds_utils.c.
+ */
+Datum
+test_pgds_parse_cpu_stats(PG_FUNCTION_ARGS)
+{
+	StringInfoData	buf;
+	double			user_cpu, sys_cpu, elapsed;
+	int				failures = 0;
+
+	initStringInfo(&buf);
+
+	/*
+	 * Test 1: full autovacuum message — real pgbench example.
+	 * All three fields must be parsed correctly from the system usage line.
+	 */
+	{
+		const char *msg =
+			"automatic vacuum of table \"pgbench.public.pgbench_tellers\": index scans: 1\n"
+			"pages: 0 removed, 236 remain, 236 scanned (100.00% of total), 0 eagerly scanned\n"
+			"tuples: 6057 removed, 1053 remain, 53 are dead but not yet removable\n"
+			"removable cutoff: 509815355, which was 120 XIDs old when operation ended\n"
+			"new relfrozenxid: 509808318, which is 301211 XIDs ahead of previous value\n"
+			"frozen: 0 pages from table (0.00% of total) had 0 tuples frozen\n"
+			"visibility map: 180 pages set all-visible, 146 pages set all-frozen\n"
+			"system usage: CPU: user: 0.00 s, system: 0.00 s, elapsed: 0.01 s";
+
+		pgds_parse_cpu_stats(msg, &user_cpu, &sys_cpu, &elapsed);
+		TEST("full vacuum: user_cpu = 0.00",    FLOAT_EQ(user_cpu, 0.00));
+		TEST("full vacuum: sys_cpu = 0.00",     FLOAT_EQ(sys_cpu,  0.00));
+		TEST("full vacuum: elapsed = 0.01",     FLOAT_EQ(elapsed,  0.01));
+	}
+
+	/*
+	 * Test 2: full autoanalyze message — real pgbench example.
+	 */
+	{
+		const char *msg =
+			"automatic analyze of table \"pgbench.public.pgbench_tellers\"\n"
+			"I/O timings: read: 1.415 ms, write: 0.115 ms\n"
+			"avg read rate: 115.234 MB/s, avg write rate: 1.953 MB/s\n"
+			"buffer usage: 168 hits, 118 reads, 2 dirtied\n"
+			"WAL usage: 7 records, 2 full page images, 14059 bytes, 0 buffers full\n"
+			"system usage: CPU: user: 10.00 s, system: 4.14 s, elapsed: 1123.00 s";
+
+		pgds_parse_cpu_stats(msg, &user_cpu, &sys_cpu, &elapsed);
+		TEST("full analyze: user_cpu = 10.00",   FLOAT_EQ(user_cpu, 10.00));
+		TEST("full analyze: sys_cpu = 4.14",    FLOAT_EQ(sys_cpu,  4.14));
+		TEST("full analyze: elapsed = 1123.00", FLOAT_EQ(elapsed,  1123.00));
+	}
+
+	/*
+	 * Test 3: non-zero CPU values — exercises match_to_double() with
+	 * values that differ across all three fields.
+	 */
+	{
+		const char *msg =
+			"automatic vacuum of table \"mydb.public.big\": index scans: 3\n"
+			"pages: 500 removed, 1000 remain, 1500 scanned (100.00% of total)\n"
+			"tuples: 10000 removed, 20000 remain, 0 are dead\n"
+			"system usage: CPU: user: 1.23 s, system: 0.45 s, elapsed: 2.10 s";
+
+		pgds_parse_cpu_stats(msg, &user_cpu, &sys_cpu, &elapsed);
+		TEST("non-zero: user_cpu = 1.23",       FLOAT_EQ(user_cpu, 1.23));
+		TEST("non-zero: sys_cpu = 0.45",        FLOAT_EQ(sys_cpu,  0.45));
+		TEST("non-zero: elapsed = 2.10",        FLOAT_EQ(elapsed,  2.10));
+	}
+
+	/*
+	 * Test 4: message with no system usage line → all outputs must be 0.0.
+	 */
+	{
+		const char *msg =
+			"automatic vacuum of table \"mydb.public.t\": index scans: 0\n"
+			"pages: 0 removed, 5 remain, 5 scanned (100.00% of total)";
+
+		pgds_parse_cpu_stats(msg, &user_cpu, &sys_cpu, &elapsed);
+		TEST("no cpu line: user_cpu = 0.00",    FLOAT_EQ(user_cpu, 0.00));
+		TEST("no cpu line: sys_cpu = 0.00",     FLOAT_EQ(sys_cpu,  0.00));
+		TEST("no cpu line: elapsed = 0.00",     FLOAT_EQ(elapsed,  0.00));
+	}
+
+	/*
+	 * Test 5: large CPU values — exercises multi-digit integer parts.
+	 */
+	{
+		const char *msg =
+			"automatic vacuum of table \"mydb.public.huge\": index scans: 10\n"
+			"system usage: CPU: user: 10.00 s, system: 5.00 s, elapsed: 15.50 s";
+
+		pgds_parse_cpu_stats(msg, &user_cpu, &sys_cpu, &elapsed);
+		TEST("large: user_cpu = 10.00",         FLOAT_EQ(user_cpu, 10.00));
+		TEST("large: sys_cpu = 5.00",           FLOAT_EQ(sys_cpu,   5.00));
+		TEST("large: elapsed = 15.50",          FLOAT_EQ(elapsed,  15.50));
 	}
 
 	appendStringInfo(&buf, "\n%s\n",

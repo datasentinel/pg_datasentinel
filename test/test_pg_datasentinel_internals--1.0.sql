@@ -10,3 +10,8 @@ CREATE FUNCTION test_pgds_parse_vacuum_stats()
 RETURNS text
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
+
+CREATE FUNCTION test_pgds_parse_cpu_stats()
+RETURNS text
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;

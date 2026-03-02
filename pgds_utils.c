@@ -77,6 +77,22 @@ match_to_int64(const char *str, regmatch_t *pm, int n)
 }
 
 /*
+ * Copy a regex sub-match into a temporary buffer and convert it to double.
+ */
+static double
+match_to_double(const char *str, regmatch_t *pm, int n)
+{
+	char	buf[32];
+	int		len = pm[n].rm_eo - pm[n].rm_so;
+
+	if (len > (int) sizeof(buf) - 1)
+		len = sizeof(buf) - 1;
+	memcpy(buf, str + pm[n].rm_so, len);
+	buf[len] = '\0';
+	return strtod(buf, NULL);
+}
+
+/*
  * Parse numeric fields from an autovacuum LOG message.
  *
  * Extracts:
@@ -127,5 +143,44 @@ pgds_parse_vacuum_stats(const char *message,
 	{
 		*tuples_removed = match_to_int64(message, pm, 1);
 		*tuples_remain  = match_to_int64(message, pm, 2);
+	}
+}
+
+/*
+ * Parse CPU timing fields from an autovacuum or autoanalyze LOG message.
+ *
+ * Extracts the values from the line:
+ *   system usage: CPU: user: N.NN s, system: N.NN s, elapsed: N.NN s
+ *
+ * Pattern is compiled once per process (static) for efficiency.
+ * All output parameters are set to 0.0 when the pattern is not found.
+ */
+void
+pgds_parse_cpu_stats(const char *message,
+					 double *user_cpu,
+					 double *sys_cpu,
+					 double *elapsed)
+{
+	static regex_t	re_cpu;
+	static bool		initialized = false;
+	regmatch_t		pm[4];
+
+	*user_cpu = 0.0;
+	*sys_cpu  = 0.0;
+	*elapsed  = 0.0;
+
+	if (!initialized)
+	{
+		regcomp(&re_cpu,
+				"system usage: CPU: user: ([0-9]+\\.[0-9]+) s, system: ([0-9]+\\.[0-9]+) s, elapsed: ([0-9]+\\.[0-9]+) s",
+				REG_EXTENDED | REG_NEWLINE);
+		initialized = true;
+	}
+
+	if (regexec(&re_cpu, message, 4, pm, 0) == 0)
+	{
+		*user_cpu = match_to_double(message, pm, 1);
+		*sys_cpu  = match_to_double(message, pm, 2);
+		*elapsed  = match_to_double(message, pm, 3);
 	}
 }

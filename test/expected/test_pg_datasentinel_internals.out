@@ -60,6 +60,30 @@ SELECT test_pgds_parse_vacuum_stats();
  
 (1 row)
 
+-- Test pgds_parse_cpu_stats() and match_to_double() from pgds_utils.c
+SELECT test_pgds_parse_cpu_stats();
+                    test_pgds_parse_cpu_stats                    
+-----------------------------------------------------------------
+ Test: full vacuum: user_cpu = 0.00                         PASS+
+ Test: full vacuum: sys_cpu = 0.00                          PASS+
+ Test: full vacuum: elapsed = 0.01                          PASS+
+ Test: full analyze: user_cpu = 10.00                       PASS+
+ Test: full analyze: sys_cpu = 4.14                         PASS+
+ Test: full analyze: elapsed = 1123.00                      PASS+
+ Test: non-zero: user_cpu = 1.23                            PASS+
+ Test: non-zero: sys_cpu = 0.45                             PASS+
+ Test: non-zero: elapsed = 2.10                             PASS+
+ Test: no cpu line: user_cpu = 0.00                         PASS+
+ Test: no cpu line: sys_cpu = 0.00                          PASS+
+ Test: no cpu line: elapsed = 0.00                          PASS+
+ Test: large: user_cpu = 10.00                              PASS+
+ Test: large: sys_cpu = 5.00                                PASS+
+ Test: large: elapsed = 15.50                               PASS+
+                                                                +
+ All tests PASSED                                               +
+ 
+(1 row)
+
 -- Cleanup
 DROP EXTENSION test_pg_datasentinel_internals;
 DROP EXTENSION pg_datasentinel;
