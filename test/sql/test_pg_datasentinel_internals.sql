@@ -12,6 +12,9 @@ SELECT test_pgds_parse_table_from_message();
 -- Test pgds_parse_vacuum_stats() and match_to_int64() from pgds_utils.c
 SELECT test_pgds_parse_vacuum_stats();
 
+-- Test pgds_parse_cpu_stats() and match_to_double() from pgds_utils.c
+SELECT test_pgds_parse_cpu_stats();
+
 -- Cleanup
 DROP EXTENSION test_pg_datasentinel_internals;
 DROP EXTENSION pg_datasentinel;

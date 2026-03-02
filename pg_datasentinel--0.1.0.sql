@@ -28,6 +28,9 @@ CREATE FUNCTION ds_autovacuum_msgs(
     OUT pages_scanned        int8,
     OUT tuples_removed       int8,
     OUT tuples_remain        int8,
+    OUT user_cpu             float8,
+    OUT sys_cpu              float8,
+    OUT elapsed              float8,
     OUT message              text
 )
 RETURNS SETOF record
@@ -53,6 +56,9 @@ CREATE FUNCTION ds_autoanalyze_msgs(
     OUT sample_blks_total          int8,
     OUT ext_stats_total            int8,
     OUT child_tables_total         int8,
+    OUT user_cpu                   float8,
+    OUT sys_cpu                    float8,
+    OUT elapsed                    float8,
     OUT message                    text
 )
 RETURNS SETOF record

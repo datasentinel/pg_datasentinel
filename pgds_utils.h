@@ -8,5 +8,9 @@ extern void pgds_parse_vacuum_stats(const char *message,
 									int64 *pages_scanned,
 									int64 *tuples_removed,
 									int64 *tuples_remain);
+extern void pgds_parse_cpu_stats(const char *message,
+								 double *user_cpu,
+								 double *sys_cpu,
+								 double *elapsed);
 
 #endif							/* PGDS_UTILS_H */
