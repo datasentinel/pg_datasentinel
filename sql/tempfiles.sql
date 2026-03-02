@@ -1,4 +1,5 @@
 SET work_mem = '1MB';
+SET log_temp_files = 0;
 
 select ds_tempfile_activity_reset();
 
