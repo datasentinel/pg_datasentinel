@@ -14,7 +14,6 @@
 #include "nodes/makefuncs.h"
 #include "utils/timestamp.h"
 #include "commands/dbcommands.h"
-#include "utils/acl.h"
 #include "catalog/namespace.h"
 #include "utils/lsyscache.h"
 #include "tcop/utility.h"
