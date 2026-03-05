@@ -217,10 +217,10 @@ find_cgroup_path(int version, const char *controller,
 #define CGROUP_V1_MEM_UNLIMITED		((long long) 0x7FFFFFFFFFFFF000LL)
 
 /*
- * Populate *info with cgroup resource limits/requests for the calling
- * process.  Returns true if we are running under cgroups (v1 or v2),
- * false otherwise.  On false return, *info is zeroed and all _set flags
- * are false.
+ * Populate *info with cgroup resource limits for the calling process
+ * (currently hard CPU quota and memory limit, where available).  Returns
+ * true if we are running under cgroups (v1 or v2), false otherwise.  On
+ * false return, *info is zeroed and all _set flags are false.
  */
 bool
 pgds_read_cgroup_info(PgdsCgroupInfo *info)
