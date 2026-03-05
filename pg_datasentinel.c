@@ -175,6 +175,9 @@ PG_FUNCTION_INFO_V1(ds_autoanalyze_msgs);
 PG_FUNCTION_INFO_V1(ds_autoanalyze_activity_reset);
 PG_FUNCTION_INFO_V1(ds_tempfile_msgs);
 PG_FUNCTION_INFO_V1(ds_tempfile_activity_reset);
+PG_FUNCTION_INFO_V1(ds_container_resource_info);
+
+#define DS_CGROUP_COLS	3	/* cgroup_version, cpu_limit, mem_limit_bytes */
 
 
 /*
@@ -431,6 +434,62 @@ ds_tempfile_activity_reset(PG_FUNCTION_ARGS)
 	LWLockRelease(pgds_tempfile->lock);
 
 	PG_RETURN_VOID();
+}
+
+
+/*
+ * ds_container_resource_info: return a single row describing the cgroup resource limits
+ * that apply to the calling PostgreSQL backend process.
+ *
+ * All fields are NULL when:
+ *   - the system does not use cgroups (bare-metal, VM without cgroup mounts)
+ *   - the particular limit is not configured (unlimited)
+ */
+Datum
+ds_container_resource_info(PG_FUNCTION_ARGS)
+{
+	TupleDesc		tupdesc;
+	Datum			values[DS_CGROUP_COLS];
+	bool			nulls[DS_CGROUP_COLS];
+	HeapTuple		tuple;
+	PgdsCgroupInfo	cg;
+	int				i = 0;
+
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in context "
+						"that cannot accept type record")));
+	tupdesc = BlessTupleDesc(tupdesc);
+
+	memset(nulls, true, sizeof(nulls));
+	memset(values, 0, sizeof(values));
+
+	if (pgds_read_cgroup_info(&cg))
+	{
+		/* cgroup_version */
+		values[i] = Int32GetDatum(cg.version);
+		nulls[i]  = false;
+		i++;
+
+		/* cpu_limit */
+		if (cg.cpu_limit_set)
+		{
+			values[i] = Float8GetDatum(cg.cpu_limit);
+			nulls[i]  = false;
+		}
+		i++;
+
+		/* mem_limit_bytes */
+		if (cg.mem_limit_set)
+		{
+			values[i] = Int64GetDatum(cg.mem_limit_bytes);
+			nulls[i]  = false;
+		}
+	}
+
+	tuple = heap_form_tuple(tupdesc, values, nulls);
+	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
 }
 
 
