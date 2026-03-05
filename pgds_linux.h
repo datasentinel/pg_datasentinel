@@ -8,11 +8,11 @@ extern long pgds_get_temp_file_bytes(int pid);
 extern long pgds_get_rss_memory_pages(int pid);
 
 /*
- * Cgroup resource limits and requests for the current process.
+ * Cgroup resource hard limits for the current process.
  *
- * Fields marked *_set are false when the limit/request is either absent
+ * Fields marked *_set are false when the corresponding limit is either absent
  * or set to "unlimited" in the cgroup hierarchy.  All values are expressed
- * in natural units: fractional CPUs for cpu_*, bytes for mem_*.
+ * in natural units: fractional CPUs for cpu_limit, bytes for mem_limit_bytes.
  *
  * version == 0 means the system is not running under cgroups at all;
  * in that case none of the other fields are meaningful.
