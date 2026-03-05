@@ -112,6 +112,8 @@ detect_cgroup_version(void)
 
 	if (stat("/sys/fs/cgroup/cgroup.controllers", &st) == 0)
 		return 2;
+	if (stat("/sys/fs/cgroup/cpu", &st) == 0)
+		return 1;
 	if (stat("/sys/fs/cgroup/memory", &st) == 0)
 		return 1;
 	return 0;
@@ -260,18 +262,6 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 			}
 		}
 
-		/* CPU request: cpu.weight (100 ≈ 1 CPU in Kubernetes mapping) */
-		snprintf(fpath, sizeof(fpath), "%s/cpu.weight", cpath);
-		{
-			long long weight;
-
-			if (read_cgroup_ll(fpath, &weight))
-			{
-				info->cpu_request_set = true;
-				info->cpu_request = (double) weight / 100.0;
-			}
-		}
-
 		/* Memory limit: memory.max → bytes or "max" */
 		snprintf(fpath, sizeof(fpath), "%s/memory.max", cpath);
 		{
@@ -286,25 +276,6 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 				{
 					info->mem_limit_set = true;
 					info->mem_limit_bytes = (int64) atoll(val_str);
-				}
-				fclose(fp);
-			}
-		}
-
-		/* Memory request: memory.high → bytes or "max" */
-		snprintf(fpath, sizeof(fpath), "%s/memory.high", cpath);
-		{
-			FILE   *fp = fopen(fpath, "r");
-
-			if (fp)
-			{
-				char val_str[32];
-
-				if (fscanf(fp, "%31s", val_str) == 1 &&
-					strcmp(val_str, "max") != 0)
-				{
-					info->mem_request_set = true;
-					info->mem_request_bytes = (int64) atoll(val_str);
 				}
 				fclose(fp);
 			}
@@ -329,17 +300,6 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 				}
 			}
 
-			/* CPU shares: 1024 shares ≈ 1 CPU */
-			snprintf(fpath, sizeof(fpath), "%s/cpu.shares", cpath);
-			{
-				long long shares;
-
-				if (read_cgroup_ll(fpath, &shares))
-				{
-					info->cpu_request_set = true;
-					info->cpu_request = (double) shares / 1024.0;
-				}
-			}
 		}
 
 		/* ---- Memory ---- */
@@ -354,12 +314,6 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 				info->mem_limit_bytes = (int64) limit;
 			}
 
-			snprintf(fpath, sizeof(fpath), "%s/memory.soft_limit_in_bytes", cpath);
-			if (read_cgroup_ll(fpath, &limit) && limit < CGROUP_V1_MEM_UNLIMITED)
-			{
-				info->mem_request_set = true;
-				info->mem_request_bytes = (int64) limit;
-			}
 		}
 	}
 

@@ -24,14 +24,9 @@ typedef struct PgdsCgroupInfo
 	bool	cpu_limit_set;
 	double	cpu_limit;			/* hard CPU quota in fractional CPUs */
 
-	bool	cpu_request_set;
-	double	cpu_request;		/* CPU shares/weight in fractional CPUs */
-
 	bool	mem_limit_set;
 	int64	mem_limit_bytes;	/* hard memory limit */
 
-	bool	mem_request_set;
-	int64	mem_request_bytes;	/* soft memory limit (request) */
 } PgdsCgroupInfo;
 
 extern bool pgds_read_cgroup_info(PgdsCgroupInfo *info);
