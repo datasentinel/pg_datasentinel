@@ -3,7 +3,6 @@
 #include "utils/builtins.h"
 #include "miscadmin.h"
 #include <limits.h>
-#include <math.h>
 #include "funcapi.h"
 #include "pgstat.h"
 #include "utils/backend_status.h"
