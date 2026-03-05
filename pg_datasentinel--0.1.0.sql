@@ -94,3 +94,19 @@ CREATE FUNCTION ds_tempfile_activity_reset()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
+
+
+CREATE FUNCTION ds_container_resource_info(
+    OUT cgroup_version    int4,
+    OUT cpu_limit         float8,
+    OUT mem_limit_bytes   int8
+)
+RETURNS record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_container_resources AS
+    SELECT cgroup_version,
+        cpu_limit,
+        mem_limit_bytes
+    FROM ds_container_resource_info();
