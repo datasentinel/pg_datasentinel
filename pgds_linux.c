@@ -1,6 +1,5 @@
 #include "postgres.h"
 #include <dirent.h>
-#include <math.h>
 #include <stdio.h>
 #include <sys/stat.h>
 #include <unistd.h>
