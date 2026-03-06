@@ -31,6 +31,7 @@ CREATE FUNCTION ds_autovacuum_msgs(
     OUT user_cpu             float8,
     OUT sys_cpu              float8,
     OUT elapsed              float8,
+    OUT aggressive           bool,
     OUT message              text
 )
 RETURNS SETOF record
@@ -146,3 +147,76 @@ CREATE FUNCTION ds_activity_reset_all()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
+
+CREATE VIEW ds_activity_summary AS
+WITH
+    av AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_autovacuum_activity),
+    aa AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_autoanalyze_activity),
+    cp AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_checkpoint_activity),
+    tf AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_tempfile_activity)
+SELECT
+    av.cnt::int4  AS autovacuum_count,   av.oldest AS autovacuum_oldest,   av.latest AS autovacuum_latest,
+    aa.cnt::int4  AS autoanalyze_count,  aa.oldest AS autoanalyze_oldest,  aa.latest AS autoanalyze_latest,
+    cp.cnt::int4  AS checkpoint_count,   cp.oldest AS checkpoint_oldest,   cp.latest AS checkpoint_latest,
+    tf.cnt::int4  AS tempfile_count,     tf.oldest AS tempfile_oldest,     tf.latest AS tempfile_latest
+FROM av, aa, cp, tf;
+
+
+CREATE FUNCTION ds_xid_snapshot_msgs(
+    OUT seq               int4,
+    OUT logged_at         timestamptz,
+    OUT next_xid          int8,
+    OUT next_mxid         int8,
+    OUT oldest_xid_db     oid
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_xid_snapshots AS
+    SELECT * FROM ds_xid_snapshot_msgs();
+
+
+CREATE FUNCTION ds_wraparound_risk_info(
+    OUT snapshot_count                  int4,
+    OUT oldest_snapshot_at              timestamptz,
+    OUT newest_snapshot_at              timestamptz,
+    OUT current_xid                     int8,
+    OUT xids_to_aggressive_vacuum       int8,
+    OUT xids_to_wraparound              int8,
+    OUT txid_rate_per_sec               float8,
+    OUT oldest_xid_database             text,
+    OUT eta_aggressive_vacuum           interval,
+    OUT eta_wraparound                  interval,
+    OUT current_mxid                    int8,
+    OUT mxids_to_aggressive_vacuum      int8,
+    OUT mxids_to_wraparound             int8,
+    OUT mxid_rate_per_sec               float8,
+    OUT oldest_mxid_database            text,
+    OUT eta_aggressive_vacuum_mxid      interval,
+    OUT eta_wraparound_mxid             interval
+)
+RETURNS record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_wraparound_risk AS
+    SELECT snapshot_count,
+        newest_snapshot_at - oldest_snapshot_at AS snapshot_span,
+        txid_rate_per_sec,
+        current_xid,
+        xids_to_aggressive_vacuum,
+        xids_to_wraparound,
+        mxid_rate_per_sec,
+        current_mxid,
+        mxids_to_aggressive_vacuum,
+        mxids_to_wraparound,
+        oldest_xid_database,
+        oldest_mxid_database,
+        LEAST(eta_aggressive_vacuum, COALESCE(eta_aggressive_vacuum_mxid, eta_aggressive_vacuum)) AS eta_aggressive_vacuum,
+        LEAST(eta_wraparound, COALESCE(eta_wraparound_mxid, eta_wraparound)) AS eta_wraparound
+    FROM ds_wraparound_risk_info();
