@@ -20,6 +20,9 @@
 #include "access/xlog.h"
 #include "access/transam.h"
 #include "access/multixact.h"
+#include "access/heapam.h"
+#include "catalog/pg_database.h"
+#include "postmaster/autovacuum.h"
 #include "pgds_linux.h"
 #include "pgds_utils.h"
 
@@ -49,11 +52,17 @@ void		_PG_fini(void);
 										 * message */
 #define PGDS_CHECKPOINT_MSG_LEN	512		/* max length of a stored checkpoint log message */
 #define DS_XID_SNAPSHOT_COLS	5		/* seq, logged_at, next_xid, next_mxid, oldest_xid_db */
-#define DS_WRAPAROUND_RISK_COLS	10		/* snapshot_count, oldest_snapshot_at, newest_snapshot_at,
-										 * oldest_xid_database, txid_rate_per_sec,
-										 * xids_to_aggressive_vacuum, xids_to_wraparound,
+#define DS_WRAPAROUND_RISK_COLS	17		/* snapshot_count,
+										 * oldest_snapshot_at, newest_snapshot_at,
+										 * current_xid, xids_to_aggressive_vacuum,
+										 * xids_to_wraparound, txid_rate_per_sec,
+										 * oldest_xid_database,
 										 * eta_aggressive_vacuum, eta_wraparound,
-										 * mxid_rate_per_sec */
+										 * current_mxid, mxids_to_aggressive_vacuum,
+										 * mxids_to_wraparound, mxid_rate_per_sec,
+										 * oldest_mxid_database,
+										 * eta_aggressive_vacuum_mxid,
+										 * eta_wraparound_mxid */
 
 /*
  * One slot in the ring buffer.
@@ -247,6 +256,7 @@ static void pgds_log_xid_snapshot(void);
 
 
 static int	max_actions;		/* max # actions to track */
+static bool	pgds_enabled;		/* enable/disable log capture at runtime */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
@@ -718,13 +728,59 @@ secs_to_interval(double secs)
 }
 
 /*
+ * get_oldest_mxid_database: scan pg_database to find the OID of the
+ * database with the minimum datminmxid.  Requires catalog access, so must
+ * only be called from a regular backend.
+ */
+static Oid
+get_oldest_mxid_database(void)
+{
+	Relation		rel;
+	TableScanDesc	scan;
+	HeapTuple		tup;
+	MultiXactId		oldest_mxid = MaxMultiXactId;
+	Oid				result = InvalidOid;
+	bool			first = true;
+
+	rel = table_open(DatabaseRelationId, AccessShareLock);
+	scan = table_beginscan_catalog(rel, 0, NULL);
+	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		Form_pg_database dbform = (Form_pg_database) GETSTRUCT(tup);
+
+		if (first || MultiXactIdPrecedes(dbform->datminmxid, oldest_mxid))
+		{
+			oldest_mxid = dbform->datminmxid;
+			result = dbform->oid;
+			first = false;
+		}
+	}
+	table_endscan(scan);
+	table_close(rel, AccessShareLock);
+	return result;
+}
+
+/*
  * ds_wraparound_risk_info: always returns exactly one composite row.
  *
- * Rate is derived from the oldest vs newest XID snapshot (ring buffer).
- * Current "distance to limits" comes from TransamVariables, which is
- * updated by autovacuum and is always available without catalog access.
- * The database name lookup (get_database_name) works because this function
- * is only callable from a regular backend, not the checkpointer.
+ * Column layout (must match OUT parameters in pg_datasentinel--0.1.0.sql):
+ *   [0]  snapshot_count
+ *   [1]  oldest_snapshot_at
+ *   [2]  newest_snapshot_at
+ *   [3]  current_xid
+ *   [4]  xids_to_aggressive_vacuum
+ *   [5]  xids_to_wraparound
+ *   [6]  txid_rate_per_sec
+ *   [7]  oldest_xid_database
+ *   [8]  eta_aggressive_vacuum
+ *   [9]  eta_wraparound
+ *   [10] current_mxid
+ *   [11] mxids_to_aggressive_vacuum
+ *   [12] mxids_to_wraparound
+ *   [13] mxid_rate_per_sec
+ *   [14] oldest_mxid_database
+ *   [15] eta_aggressive_vacuum_mxid
+ *   [16] eta_wraparound_mxid
  */
 Datum
 ds_wraparound_risk_info(PG_FUNCTION_ARGS)
@@ -733,15 +789,25 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	Datum					values[DS_WRAPAROUND_RISK_COLS];
 	bool					nulls[DS_WRAPAROUND_RISK_COLS];
 	HeapTuple				tuple;
-	int						i = 0;
 
-	/* Current XID state from shared memory */
+	/* XID state */
 	FullTransactionId		cur_full_xid;
 	TransactionId			cur_xid;
-	TransactionId			vac_limit;
-	TransactionId			wrap_limit;
 	int64					xids_to_vac;
 	int64					xids_to_wrap;
+
+	/* MXID state */
+	MultiXactId				cur_mxid;
+	MultiXactId				oldest_mxact;
+	MultiXactId				mxid_vac_limit;
+	MultiXactId				mxid_wrap_limit;
+	int64					mxids_to_vac;
+	int64					mxids_to_wrap;
+
+	/* Ring-buffer snapshot data */
+	int						snap_count = 0;
+	PgdsXidSnapshotEntry	oldest_e,
+							newest_e;
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
@@ -753,130 +819,181 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	memset(nulls, true, sizeof(nulls));
 	memset(values, 0, sizeof(values));
 
-	/* snapshot_count — always populated, even when 0 */
+	/* Read ring-buffer state once under a single lock acquisition */
 	if (pgds_xid_snapshot != NULL)
 	{
 		LWLockAcquire(pgds_xid_snapshot->lock, LW_SHARED);
-		values[i] = Int32GetDatum(pgds_xid_snapshot->count);
-		nulls[i]  = false;
+		snap_count = pgds_xid_snapshot->count;
+		if (snap_count >= 2)
+		{
+			oldest_e = pgds_xid_snapshot->entries[pgds_xid_snapshot->head];
+			newest_e = pgds_xid_snapshot->entries[
+				(pgds_xid_snapshot->tail + pgds_xid_snapshot->max - 1)
+				% pgds_xid_snapshot->max];
+		}
 		LWLockRelease(pgds_xid_snapshot->lock);
 	}
-	else
-	{
-		values[i] = Int32GetDatum(0);
-		nulls[i]  = false;
-	}
-	i++;  /* i=1 */
 
 	/*
-	 * Read current XID limits from TransamVariables.  These are updated
-	 * by autovacuum (SetTransactionIdLimit) so they reflect the true oldest
-	 * frozen XID across all databases.
+	 * XID distances — from TransamVariables (updated by autovacuum).
+	 * Arithmetic is modular uint32: cast to int32 gives signed distance.
 	 */
 	cur_full_xid = ReadNextFullTransactionId();
 	cur_xid      = XidFromFullTransactionId(cur_full_xid);
-	vac_limit    = TransamVariables->xidVacLimit;
-	wrap_limit   = TransamVariables->xidWrapLimit;
+	xids_to_vac  = (int64) (int32) (TransamVariables->xidVacLimit  - cur_xid);
+	xids_to_wrap = (int64) (int32) (TransamVariables->xidWrapLimit - cur_xid);
 
 	/*
-	 * XID arithmetic is modular (uint32 space).  Casting the difference to
-	 * int32 handles the wrap correctly: a positive result means we have that
-	 * many XIDs left; negative means the limit has already been crossed.
+	 * MXID distances — recompute limits with the same formulas used by
+	 * SetMultiXactIdLimit(), using exported GUC and ReadMultiXactIdRange().
 	 */
-	xids_to_vac  = (int64) (int32) (vac_limit  - cur_xid);
-	xids_to_wrap = (int64) (int32) (wrap_limit - cur_xid);
+	ReadMultiXactIdRange(&oldest_mxact, &cur_mxid);
+	mxid_vac_limit  = oldest_mxact + (MultiXactId) autovacuum_multixact_freeze_max_age;
+	if (mxid_vac_limit < FirstMultiXactId)
+		mxid_vac_limit += FirstMultiXactId;
+	mxid_wrap_limit = oldest_mxact + (MaxMultiXactId >> 1);
+	if (mxid_wrap_limit < FirstMultiXactId)
+		mxid_wrap_limit += FirstMultiXactId;
+	mxids_to_vac  = (int64) (int32) (mxid_vac_limit  - cur_mxid);
+	mxids_to_wrap = (int64) (int32) (mxid_wrap_limit - cur_mxid);
 
-	/* oldest_xid_database from current TransamVariables */
+	/* [0] snapshot_count */
+	values[0] = Int32GetDatum(snap_count);
+	nulls[0]  = false;
+
+	/* [1] oldest_snapshot_at, [2] newest_snapshot_at */
+	if (snap_count >= 2)
+	{
+		values[1] = TimestampTzGetDatum(oldest_e.logged_at);
+		nulls[1]  = false;
+		values[2] = TimestampTzGetDatum(newest_e.logged_at);
+		nulls[2]  = false;
+	}
+
+	/* [3] current_xid: epoch-aware full transaction ID */
+	values[3] = Int64GetDatum((int64) U64FromFullTransactionId(cur_full_xid));
+	nulls[3]  = false;
+
+	/* [4] xids_to_aggressive_vacuum */
+	if (xids_to_vac > 0)
+	{
+		values[4] = Int64GetDatum(xids_to_vac);
+		nulls[4]  = false;
+	}
+
+	/* [5] xids_to_wraparound */
+	if (xids_to_wrap > 0)
+	{
+		values[5] = Int64GetDatum(xids_to_wrap);
+		nulls[5]  = false;
+	}
+
+	/* [6..9] XID rate and ETA — require at least 2 snapshots */
+	if (snap_count >= 2)
+	{
+		double elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
+							 / USECS_PER_SEC;
+
+		if (elapsed_sec > 0)
+		{
+			double txid_rate = (double) (newest_e.next_xid - oldest_e.next_xid)
+							   / elapsed_sec;
+
+			/* [6] txid_rate_per_sec */
+			values[6] = Float8GetDatum(txid_rate);
+			nulls[6]  = false;
+
+			/* [8] eta_aggressive_vacuum */
+			if (xids_to_vac > 0 && txid_rate > 0)
+			{
+				values[8] = IntervalPGetDatum(
+					secs_to_interval((double) xids_to_vac / txid_rate));
+				nulls[8] = false;
+			}
+
+			/* [9] eta_wraparound */
+			if (xids_to_wrap > 0 && txid_rate > 0)
+			{
+				values[9] = IntervalPGetDatum(
+					secs_to_interval((double) xids_to_wrap / txid_rate));
+				nulls[9] = false;
+			}
+		}
+	}
+
+	/* [7] oldest_xid_database */
 	if (OidIsValid(TransamVariables->oldestXidDB))
 	{
 		char *dbname = get_database_name(TransamVariables->oldestXidDB);
 		if (dbname)
 		{
-			values[i] = CStringGetTextDatum(dbname);
-			nulls[i]  = false;
+			values[7] = CStringGetTextDatum(dbname);
+			nulls[7]  = false;
 		}
 	}
-	/* i=1: oldest_xid_database */
-	i++;  /* i=2 */
 
-	/* xids_to_aggressive_vacuum */
-	if (xids_to_vac > 0)
+	/* [10] current_mxid */
+	values[10] = Int64GetDatum((int64) cur_mxid);
+	nulls[10]  = false;
+
+	/* [11] mxids_to_aggressive_vacuum */
+	if (mxids_to_vac > 0)
 	{
-		values[i] = Int64GetDatum(xids_to_vac);
-		nulls[i]  = false;
+		values[11] = Int64GetDatum(mxids_to_vac);
+		nulls[11]  = false;
 	}
-	i++;  /* i=3 */
 
-	/* xids_to_wraparound */
-	if (xids_to_wrap > 0)
+	/* [12] mxids_to_wraparound */
+	if (mxids_to_wrap > 0)
 	{
-		values[i] = Int64GetDatum(xids_to_wrap);
-		nulls[i]  = false;
+		values[12] = Int64GetDatum(mxids_to_wrap);
+		nulls[12]  = false;
 	}
-	i++;  /* i=4 */
 
-	/* Need at least 2 snapshots to compute a rate */
-	if (pgds_xid_snapshot != NULL && pgds_xid_snapshot->count >= 2)
+	/* [13..16] MXID rate and ETA — require at least 2 snapshots */
+	if (snap_count >= 2)
 	{
-		PgdsXidSnapshotEntry oldest_e,
-							 newest_e;
-		double				 elapsed_sec;
-		double				 txid_rate;
-		double				 mxid_rate;
-
-		LWLockAcquire(pgds_xid_snapshot->lock, LW_SHARED);
-		oldest_e = pgds_xid_snapshot->entries[pgds_xid_snapshot->head];
-		newest_e = pgds_xid_snapshot->entries[
-			(pgds_xid_snapshot->tail + pgds_xid_snapshot->max - 1)
-			% pgds_xid_snapshot->max];
-		LWLockRelease(pgds_xid_snapshot->lock);
-
-		/* oldest_snapshot_at */
-		values[i] = TimestampTzGetDatum(oldest_e.logged_at);
-		nulls[i]  = false;
-		i++;  /* i=5 */
-
-		/* newest_snapshot_at */
-		values[i] = TimestampTzGetDatum(newest_e.logged_at);
-		nulls[i]  = false;
-		i++;  /* i=6 */
-
-		elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
-					  / USECS_PER_SEC;
+		double elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
+							 / USECS_PER_SEC;
 
 		if (elapsed_sec > 0)
 		{
-			txid_rate = (double) (newest_e.next_xid - oldest_e.next_xid)
-						/ elapsed_sec;
-			mxid_rate = (double) (newest_e.next_mxid - oldest_e.next_mxid)
-						/ elapsed_sec;
+			double mxid_rate = (double) (newest_e.next_mxid - oldest_e.next_mxid)
+							   / elapsed_sec;
 
-			/* txid_rate_per_sec */
-			values[i] = Float8GetDatum(txid_rate);
-			nulls[i]  = false;
-			i++;  /* i=7 */
+			/* [13] mxid_rate_per_sec */
+			values[13] = Float8GetDatum(mxid_rate);
+			nulls[13]  = false;
 
-			/* eta_aggressive_vacuum */
-			if (xids_to_vac > 0 && txid_rate > 0)
+			/* [15] eta_aggressive_vacuum_mxid */
+			if (mxids_to_vac > 0 && mxid_rate > 0)
 			{
-				values[i] = IntervalPGetDatum(
-					secs_to_interval((double) xids_to_vac / txid_rate));
-				nulls[i] = false;
+				values[15] = IntervalPGetDatum(
+					secs_to_interval((double) mxids_to_vac / mxid_rate));
+				nulls[15] = false;
 			}
-			i++;  /* i=8 */
 
-			/* eta_wraparound */
-			if (xids_to_wrap > 0 && txid_rate > 0)
+			/* [16] eta_wraparound_mxid */
+			if (mxids_to_wrap > 0 && mxid_rate > 0)
 			{
-				values[i] = IntervalPGetDatum(
-					secs_to_interval((double) xids_to_wrap / txid_rate));
-				nulls[i] = false;
+				values[16] = IntervalPGetDatum(
+					secs_to_interval((double) mxids_to_wrap / mxid_rate));
+				nulls[16] = false;
 			}
-			i++;  /* i=9 */
+		}
+	}
 
-			/* mxid_rate_per_sec */
-			values[i] = Float8GetDatum(mxid_rate);
-			nulls[i]  = false;
+	/* [14] oldest_mxid_database — catalog scan for min datminmxid */
+	{
+		Oid mxid_db = get_oldest_mxid_database();
+		if (OidIsValid(mxid_db))
+		{
+			char *dbname = get_database_name(mxid_db);
+			if (dbname)
+			{
+				values[14] = CStringGetTextDatum(dbname);
+				nulls[14]  = false;
+			}
 		}
 	}
 
@@ -1442,6 +1559,10 @@ pgds_emit_log(ErrorData *edata)
 	if (prev_emit_log_hook)
 		prev_emit_log_hook(edata);
 
+	/* Skip all capture when disabled */
+	if (!pgds_enabled)
+		return;
+
 	/* Only interested in LOG-level messages going to the server log */
 	if (edata->elevel != LOG || !edata->output_to_server)
 		return;
@@ -1506,6 +1627,17 @@ _PG_init(void)
 	/*
 	 * Define custom GUC variables.
 	 */
+	DefineCustomBoolVariable("pg_datasentinel.enabled",
+							 "Enables or disables log message capture by pg_datasentinel.",
+							 NULL,
+							 &pgds_enabled,
+							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomIntVariable("pg_datasentinel.max",
 							"Sets the maximum number of actions tracked by pg_datasentinel.",
 							NULL,

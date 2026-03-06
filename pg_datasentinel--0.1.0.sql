@@ -164,20 +164,41 @@ CREATE VIEW ds_xid_snapshots AS
 
 
 CREATE FUNCTION ds_wraparound_risk_info(
-    OUT snapshot_count              int4,
-    OUT oldest_xid_database         text,
-    OUT xids_to_aggressive_vacuum   int8,
-    OUT xids_to_wraparound          int8,
-    OUT oldest_snapshot_at          timestamptz,
-    OUT newest_snapshot_at          timestamptz,
-    OUT txid_rate_per_sec           float8,
-    OUT eta_aggressive_vacuum       interval,
-    OUT eta_wraparound              interval,
-    OUT mxid_rate_per_sec           float8
+    OUT snapshot_count                  int4,
+    OUT oldest_snapshot_at              timestamptz,
+    OUT newest_snapshot_at              timestamptz,
+    OUT current_xid                     int8,
+    OUT xids_to_aggressive_vacuum       int8,
+    OUT xids_to_wraparound              int8,
+    OUT txid_rate_per_sec               float8,
+    OUT oldest_xid_database             text,
+    OUT eta_aggressive_vacuum           interval,
+    OUT eta_wraparound                  interval,
+    OUT current_mxid                    int8,
+    OUT mxids_to_aggressive_vacuum      int8,
+    OUT mxids_to_wraparound             int8,
+    OUT mxid_rate_per_sec               float8,
+    OUT oldest_mxid_database            text,
+    OUT eta_aggressive_vacuum_mxid      interval,
+    OUT eta_wraparound_mxid             interval
 )
 RETURNS record
 AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
 CREATE VIEW ds_wraparound_risk AS
-    SELECT * FROM ds_wraparound_risk_info();
+    SELECT snapshot_count,
+        newest_snapshot_at - oldest_snapshot_at AS snapshot_span,
+        txid_rate_per_sec,
+        current_xid,
+        xids_to_aggressive_vacuum,
+        xids_to_wraparound,
+        mxid_rate_per_sec,
+        current_mxid,
+        mxids_to_aggressive_vacuum,
+        mxids_to_wraparound,
+        oldest_xid_database,
+        oldest_mxid_database,
+        LEAST(eta_aggressive_vacuum, eta_aggressive_vacuum_mxid) AS eta_agressive_vacuum,
+        LEAST(eta_wraparound, eta_wraparound_mxid) AS eta_wraparound
+    FROM ds_wraparound_risk_info();

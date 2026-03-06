@@ -240,6 +240,7 @@ Snapshots are taken automatically at each checkpoint, but no more than once per 
 | Column | Type | Description |
 |---|---|---|
 | `snapshot_count` | `int4` | Number of XID snapshots stored. |
+| `current_xid` | `int8` | Current next full transaction ID (epoch-aware). Live. |
 | `oldest_xid_database` | `text` | Name of the database with the oldest frozen XID (live, from shared memory). |
 | `xids_to_aggressive_vacuum` | `int8` | XIDs remaining before autovacuum starts aggressive freezing (`autovacuum_freeze_max_age`). Live. |
 | `xids_to_wraparound` | `int8` | XIDs remaining before actual wraparound. Live. |

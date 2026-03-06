@@ -36,13 +36,22 @@ SELECT count(*) AS risk_rows FROM ds_wraparound_risk;
 -- With 1 snapshot: live distances must be populated, rate/ETA must be NULL
 SELECT
     snapshot_count                         = 1  AS one_snapshot,
-    oldest_xid_database                   IS NOT NULL AS has_db_name,
+    snapshot_span                         IS NULL     AS span_null_when_1snap,
+    current_xid                           IS NOT NULL AS has_current_xid,
     xids_to_aggressive_vacuum             IS NOT NULL AS has_xids_to_aggvac,
     xids_to_wraparound                    IS NOT NULL AS has_xids_to_wrap,
     xids_to_aggressive_vacuum             >  0        AS aggvac_positive,
     xids_to_wraparound                    >  0        AS wrap_positive,
+    oldest_xid_database                   IS NOT NULL AS has_xid_db_name,
     txid_rate_per_sec                     IS NULL     AS rate_null_when_1snap,
-    eta_aggressive_vacuum                 IS NULL     AS eta_aggvac_null,
+    current_mxid                          IS NOT NULL AS has_current_mxid,
+    mxids_to_aggressive_vacuum            IS NOT NULL AS has_mxids_to_aggvac,
+    mxids_to_wraparound                   IS NOT NULL AS has_mxids_to_wrap,
+    mxids_to_aggressive_vacuum            >  0        AS mxid_aggvac_positive,
+    mxids_to_wraparound                   >  0        AS mxid_wrap_positive,
+    oldest_mxid_database                  IS NOT NULL AS has_mxid_db_name,
+    mxid_rate_per_sec                     IS NULL     AS mxid_rate_null_when_1snap,
+    eta_agressive_vacuum                  IS NULL     AS eta_aggvac_null,
     eta_wraparound                        IS NULL     AS eta_wrap_null
 FROM ds_wraparound_risk;
 
@@ -65,7 +74,9 @@ SELECT
     count(*)                              = 1          AS still_one_row,
     bool_and(snapshot_count              >= 1)         AS at_least_one_snap,
     bool_and(xids_to_aggressive_vacuum   >  0)         AS aggvac_still_positive,
-    bool_and(xids_to_wraparound          >  0)         AS wrap_still_positive
+    bool_and(xids_to_wraparound          >  0)         AS wrap_still_positive,
+    bool_and(mxids_to_aggressive_vacuum  >  0)         AS mxid_aggvac_still_positive,
+    bool_and(mxids_to_wraparound         >  0)         AS mxid_wrap_still_positive
 FROM ds_wraparound_risk;
 
 -- Cleanup
