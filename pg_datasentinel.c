@@ -222,6 +222,7 @@ PG_FUNCTION_INFO_V1(ds_tempfile_msgs);
 PG_FUNCTION_INFO_V1(ds_tempfile_activity_reset);
 PG_FUNCTION_INFO_V1(ds_checkpoint_msgs);
 PG_FUNCTION_INFO_V1(ds_checkpoint_activity_reset);
+PG_FUNCTION_INFO_V1(ds_activity_reset_all);
 PG_FUNCTION_INFO_V1(ds_container_resource_info);
 
 #define DS_CGROUP_COLS	3	/* cgroup_version, cpu_limit, mem_limit_bytes */
@@ -554,6 +555,51 @@ ds_checkpoint_activity_reset(PG_FUNCTION_ARGS)
 	pgds_checkpoint->tail  = 0;
 	pgds_checkpoint->count = 0;
 	LWLockRelease(pgds_checkpoint->lock);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * ds_activity_reset_all: discard all entries from every ring buffer at once.
+ */
+Datum
+ds_activity_reset_all(PG_FUNCTION_ARGS)
+{
+	if (pgds_autovacuum != NULL)
+	{
+		LWLockAcquire(pgds_autovacuum->lock, LW_EXCLUSIVE);
+		pgds_autovacuum->head  = 0;
+		pgds_autovacuum->tail  = 0;
+		pgds_autovacuum->count = 0;
+		LWLockRelease(pgds_autovacuum->lock);
+	}
+
+	if (pgds_autoanalyze != NULL)
+	{
+		LWLockAcquire(pgds_autoanalyze->lock, LW_EXCLUSIVE);
+		pgds_autoanalyze->head  = 0;
+		pgds_autoanalyze->tail  = 0;
+		pgds_autoanalyze->count = 0;
+		LWLockRelease(pgds_autoanalyze->lock);
+	}
+
+	if (pgds_tempfile != NULL)
+	{
+		LWLockAcquire(pgds_tempfile->lock, LW_EXCLUSIVE);
+		pgds_tempfile->head  = 0;
+		pgds_tempfile->tail  = 0;
+		pgds_tempfile->count = 0;
+		LWLockRelease(pgds_tempfile->lock);
+	}
+
+	if (pgds_checkpoint != NULL)
+	{
+		LWLockAcquire(pgds_checkpoint->lock, LW_EXCLUSIVE);
+		pgds_checkpoint->head  = 0;
+		pgds_checkpoint->tail  = 0;
+		pgds_checkpoint->count = 0;
+		LWLockRelease(pgds_checkpoint->lock);
+	}
 
 	PG_RETURN_VOID();
 }
