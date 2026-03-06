@@ -9,11 +9,11 @@ It must be loaded via `shared_preload_libraries` and works on Linux.
 ## Features
 
 - **Enhanced activity view** — extends `pg_stat_activity` with real-time memory usage, live temporary file bytes, and (PostgreSQL 18+) the current plan ID for each backend.
-- **Autovacuum history** — captures every autovacuum LOG message in a shared-memory ring buffer and parses page/tuple counters and CPU timings.
+- **Autovacuum history** — captures every autovacuum LOG message in a shared-memory ring buffer and parses page/tuple counters, CPU timings, and whether the run was an aggressive wraparound-prevention vacuum.
 - **Autoanalyze history** — same for autoanalyze messages, with sample block and extended-statistics counters.
 - **Temporary file history** — captures every `log_temp_files` LOG message with file size and role information.
 - **Checkpoint history** — captures every checkpoint and restartpoint completion with detailed I/O and sync timings.
-- **Wraparound risk estimation** — samples XID and MXID at each checkpoint (at most once per hour) and provides a single-row view with the current distances to the autovacuum freeze limit and to actual wraparound, plus rate-based ETAs.
+- **Wraparound risk estimation** — samples XID and MXID at each checkpoint (at most once per hour) and provides a single-row view with live distances to the aggressive-vacuum and wraparound limits for both XID and MXID, plus rate-based ETAs that reflect whichever counter is closer to danger.
 - **Container resource limits** — reports cgroup v1/v2 CPU quota and memory hard limit for the PostgreSQL process.
 
 ---
@@ -128,11 +128,12 @@ A ring buffer of the last `pg_datasentinel.max` autovacuum LOG messages. The mes
 | `user_cpu` | `float8` | User CPU time in seconds. |
 | `sys_cpu` | `float8` | System CPU time in seconds. |
 | `elapsed` | `float8` | Elapsed wall-clock time in seconds. |
+| `aggressive` | `bool` | `true` if this was an aggressive vacuum to prevent wraparound (`automatic aggressive vacuum`). |
 | `message` | `text` | Full raw LOG message text. |
 
 ```sql
 -- Recent autovacuum runs, slowest first
-SELECT logged_at, schemaname, relname, elapsed, tuples_removed
+SELECT logged_at, schemaname, relname, elapsed, tuples_removed, aggressive
 FROM ds_autovacuum_activity
 ORDER BY elapsed DESC;
 
@@ -233,31 +234,34 @@ SELECT ds_checkpoint_activity_reset();
 
 ### `ds_wraparound_risk`
 
-Always returns exactly **one row**. Combines live data from PostgreSQL shared memory (`TransamVariables`) with rate information derived from hourly XID snapshots to estimate how far the cluster is from XID wraparound.
+Always returns exactly **one row**. Combines live data from PostgreSQL shared memory with rate information derived from hourly XID/MXID snapshots to estimate wraparound risk for both regular transactions and multixacts.
 
-Snapshots are taken automatically at each checkpoint, but no more than once per hour, so the rate estimate improves over time.
+Snapshots are taken automatically at each checkpoint, but no more than once per hour. The `eta_*` columns take the minimum across XID and MXID so a single value signals the nearest danger regardless of which counter is the bottleneck.
 
 | Column | Type | Description |
 |---|---|---|
-| `snapshot_count` | `int4` | Number of XID snapshots stored. |
+| `snapshot_count` | `int4` | Number of XID/MXID snapshots stored. |
+| `snapshot_span` | `interval` | Time elapsed between the oldest and newest snapshot (`NULL` if fewer than 2 snapshots). |
+| `txid_rate_per_sec` | `float8` | Estimated transaction rate in XIDs/second. `NULL` if fewer than 2 snapshots. |
 | `current_xid` | `int8` | Current next full transaction ID (epoch-aware). Live. |
-| `oldest_xid_database` | `text` | Name of the database with the oldest frozen XID (live, from shared memory). |
-| `xids_to_aggressive_vacuum` | `int8` | XIDs remaining before autovacuum starts aggressive freezing (`autovacuum_freeze_max_age`). Live. |
-| `xids_to_wraparound` | `int8` | XIDs remaining before actual wraparound. Live. |
-| `oldest_snapshot_at` | `timestamptz` | Timestamp of the oldest XID snapshot (`NULL` if fewer than 2 snapshots). |
-| `newest_snapshot_at` | `timestamptz` | Timestamp of the newest XID snapshot. |
-| `txid_rate_per_sec` | `float8` | Estimated transaction rate in XIDs/second (from ring buffer). `NULL` if fewer than 2 snapshots or zero elapsed time. |
-| `eta_aggressive_vacuum` | `interval` | Estimated time until aggressive vacuuming begins. `NULL` if rate is unknown. |
-| `eta_wraparound` | `interval` | Estimated time until wraparound risk. `NULL` if rate is unknown. |
-| `mxid_rate_per_sec` | `float8` | Estimated multixact consumption rate in MXIDs/second. |
+| `xids_to_aggressive_vacuum` | `int8` | XIDs remaining before autovacuum starts aggressive freezing. Live. |
+| `xids_to_wraparound` | `int8` | XIDs remaining before XID wraparound. Live. |
+| `mxid_rate_per_sec` | `float8` | Estimated multixact consumption rate in MXIDs/second. `NULL` if fewer than 2 snapshots. |
+| `current_mxid` | `int8` | Current next multixact ID. Live. |
+| `mxids_to_aggressive_vacuum` | `int8` | MXIDs remaining before autovacuum starts aggressive MXID freezing. Live. |
+| `mxids_to_wraparound` | `int8` | MXIDs remaining before MXID wraparound. Live. |
+| `oldest_xid_database` | `text` | Database with the oldest frozen XID. Live. |
+| `oldest_mxid_database` | `text` | Database with the oldest frozen MXID (catalog scan for minimum `datminmxid`). |
+| `eta_aggressive_vacuum` | `interval` | Estimated time until aggressive vacuuming begins — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
+| `eta_wraparound` | `interval` | Estimated time until wraparound risk — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
 
 ```sql
 -- Current wraparound risk at a glance
 SELECT
-    oldest_xid_database,
-    xids_to_aggressive_vacuum,
-    xids_to_wraparound,
-    txid_rate_per_sec,
+    snapshot_count,
+    snapshot_span,
+    current_xid, xids_to_aggressive_vacuum, xids_to_wraparound,
+    current_mxid, mxids_to_aggressive_vacuum, mxids_to_wraparound,
     eta_aggressive_vacuum,
     eta_wraparound
 FROM ds_wraparound_risk;

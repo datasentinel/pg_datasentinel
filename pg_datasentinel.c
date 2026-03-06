@@ -34,9 +34,10 @@ void		_PG_fini(void);
 
 #define PROC_VIRTUAL_FS    "/proc"
 #define DS_STAT_IDS_COLS		4
-#define DS_AUTOVACUUM_COLS		16	/* seq, logged_at, datname, schemaname, relname, relid,
+#define DS_AUTOVACUUM_COLS		17	/* seq, logged_at, datname, schemaname, relname, relid,
 								 * heap_pages, pages_removed, pages_remain, pages_scanned,
-								 * tuples_removed, tuples_remain, user_cpu, sys_cpu, elapsed, message */
+								 * tuples_removed, tuples_remain, user_cpu, sys_cpu, elapsed,
+								 * aggressive, message */
 #define DS_ANALYZE_COLS			13	/* seq, logged_at, datname, schemaname, relname, relid,
 								 * sample_blks_total, ext_stats_total, child_tables_total,
 								 * user_cpu, sys_cpu, elapsed, message */
@@ -87,6 +88,7 @@ typedef struct PgdsAutovacuumEntry
 	double		user_cpu;
 	double		sys_cpu;
 	double		elapsed;
+	bool		aggressive;				/* true if "automatic aggressive vacuum" */
 	char		message[PGDS_AUTOVACUUM_MSG_LEN];
 } PgdsAutovacuumEntry;
 
@@ -338,6 +340,7 @@ ds_autovacuum_msgs(PG_FUNCTION_ARGS)
 		values[i++] = Float8GetDatum(pgds_autovacuum->entries[idx].user_cpu);
 		values[i++] = Float8GetDatum(pgds_autovacuum->entries[idx].sys_cpu);
 		values[i++] = Float8GetDatum(pgds_autovacuum->entries[idx].elapsed);
+		values[i++] = BoolGetDatum(pgds_autovacuum->entries[idx].aggressive);
 		values[i++] = CStringGetTextDatum(pgds_autovacuum->entries[idx].message);
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
@@ -1312,6 +1315,7 @@ pgds_log_autovacuum(ErrorData *edata)
 							 &e->user_cpu,
 							 &e->sys_cpu,
 							 &e->elapsed);
+		e->aggressive = (strstr(edata->message, "automatic aggressive vacuum") != NULL);
 	}
 
 	strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].message,

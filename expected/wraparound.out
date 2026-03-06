@@ -77,7 +77,7 @@ SELECT
     mxids_to_wraparound                   >  0        AS mxid_wrap_positive,
     oldest_mxid_database                  IS NOT NULL AS has_mxid_db_name,
     mxid_rate_per_sec                     IS NULL     AS mxid_rate_null_when_1snap,
-    eta_agressive_vacuum                  IS NULL     AS eta_aggvac_null,
+    eta_aggressive_vacuum                  IS NULL     AS eta_aggvac_null,
     eta_wraparound                        IS NULL     AS eta_wrap_null
 FROM ds_wraparound_risk;
  one_snapshot | span_null_when_1snap | has_current_xid | has_xids_to_aggvac | has_xids_to_wrap | aggvac_positive | wrap_positive | has_xid_db_name | rate_null_when_1snap | has_current_mxid | has_mxids_to_aggvac | has_mxids_to_wrap | mxid_aggvac_positive | mxid_wrap_positive | has_mxid_db_name | mxid_rate_null_when_1snap | eta_aggvac_null | eta_wrap_null 

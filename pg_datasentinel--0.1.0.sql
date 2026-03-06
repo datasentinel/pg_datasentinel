@@ -31,6 +31,7 @@ CREATE FUNCTION ds_autovacuum_msgs(
     OUT user_cpu             float8,
     OUT sys_cpu              float8,
     OUT elapsed              float8,
+    OUT aggressive           bool,
     OUT message              text
 )
 RETURNS SETOF record
@@ -199,6 +200,6 @@ CREATE VIEW ds_wraparound_risk AS
         mxids_to_wraparound,
         oldest_xid_database,
         oldest_mxid_database,
-        LEAST(eta_aggressive_vacuum, eta_aggressive_vacuum_mxid) AS eta_agressive_vacuum,
-        LEAST(eta_wraparound, eta_wraparound_mxid) AS eta_wraparound
+        LEAST(eta_aggressive_vacuum, COALESCE(eta_aggressive_vacuum_mxid, eta_aggressive_vacuum)) AS eta_aggressive_vacuum,
+        LEAST(eta_wraparound, COALESCE(eta_wraparound_mxid, eta_wraparound)) AS eta_wraparound
     FROM ds_wraparound_risk_info();
