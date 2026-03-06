@@ -110,3 +110,34 @@ CREATE VIEW ds_container_resources AS
         cpu_limit,
         mem_limit_bytes
     FROM ds_container_resource_info();
+
+
+CREATE FUNCTION ds_checkpoint_msgs(
+    OUT seq             int4,
+    OUT logged_at       timestamptz,
+    OUT is_restartpoint bool,
+    OUT start_t         timestamptz,
+    OUT end_t           timestamptz,
+    OUT bufs_written    int4,
+    OUT segs_added      int4,
+    OUT segs_removed    int4,
+    OUT segs_recycled   int4,
+    OUT write_time      float8,
+    OUT sync_time       float8,
+    OUT total_time      float8,
+    OUT sync_rels       int4,
+    OUT longest_sync    float8,
+    OUT average_sync    float8,
+    OUT message         text
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_checkpoint_activity AS
+    SELECT * FROM ds_checkpoint_msgs();
+
+CREATE FUNCTION ds_checkpoint_activity_reset()
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C PARALLEL SAFE;
