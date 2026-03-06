@@ -1,11 +1,7 @@
-#ifndef PGDS_LINUX_H
-#define PGDS_LINUX_H
+#ifndef PGDS_CGROUP_H
+#define PGDS_CGROUP_H
 
 #include "postgres.h"
-
-extern bool pgds_is_dir_accessible(const char *path);
-extern long pgds_get_temp_file_bytes(int pid);
-extern long pgds_get_rss_memory_pages(int pid);
 
 /*
  * Cgroup resource hard limits for the current process.
@@ -31,4 +27,4 @@ typedef struct PgdsCgroupInfo
 
 extern bool pgds_read_cgroup_info(PgdsCgroupInfo *info);
 
-#endif							/* PGDS_LINUX_H */
+#endif							/* PGDS_CGROUP_H */

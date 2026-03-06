@@ -1,7 +1,13 @@
 EXTENSION = pg_datasentinel
 
 MODULE_big = pg_datasentinel
-OBJS = pg_datasentinel.o pgds_linux.o pgds_utils.o
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+OBJS = pg_datasentinel.o linux/pgds_proc.o linux/pgds_cgroup.o pgds_utils.o
+else
+OBJS = pg_datasentinel.o pgds_utils.o
+endif
 
 DATA = pg_datasentinel--0.1.0.sql
 
