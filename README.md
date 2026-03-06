@@ -67,9 +67,10 @@ log_temp_files = 0                # log every temporary file creation
 
 ### GUC parameter
 
-| Parameter | Default | Min | Scope | Description |
+| Parameter | Type | Default | Scope | Description |
 |---|---|---|---|---|
-| `pg_datasentinel.max` | `5000` | `100` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files). When full, the oldest entry is overwritten. |
+| `pg_datasentinel.enabled` | `bool` | `on` | `superuser` | Enable or disable log message capture at runtime. When `off`, the hook returns immediately without writing to any ring buffer. |
+| `pg_datasentinel.max` | `int` | `5000` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files, checkpoints). When full, the oldest entry is overwritten. Requires a server restart. |
 
 ---
 
