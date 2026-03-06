@@ -1,6 +1,6 @@
 # pg_datasentinel
 
-`pg_datasentinel` is a PostgreSQL extension that enriches built-in monitoring with data not available from standard catalog views: per-backend memory and temporary file usage (read from `/proc`), in-memory ring buffers of autovacuum/autoanalyze log messages with parsed statistics, and container resource limit detection via cgroups.
+`pg_datasentinel` is a PostgreSQL extension that enriches built-in monitoring with data not available from standard catalog views: per-backend memory and temporary file usage (read from `/proc`), in-memory ring buffers of autovacuum/autoanalyze/checkpoint/temporary-file log messages with parsed statistics, XID wraparound risk estimation, and container resource limit detection via cgroups.
 
 It must be loaded via `shared_preload_libraries` and works on Linux.
 
@@ -9,9 +9,11 @@ It must be loaded via `shared_preload_libraries` and works on Linux.
 ## Features
 
 - **Enhanced activity view** — extends `pg_stat_activity` with real-time memory usage, live temporary file bytes, and (PostgreSQL 18+) the current plan ID for each backend.
-- **Autovacuum history** — captures every autovacuum LOG message in a shared-memory ring buffer and parses page/tuple counters and CPU timings out of the message text.
-- **Autoanalyze history** — same as above for autoanalyze messages, with sample block and extended-statistics counters.
+- **Autovacuum history** — captures every autovacuum LOG message in a shared-memory ring buffer and parses page/tuple counters, CPU timings, and whether the run was an aggressive wraparound-prevention vacuum.
+- **Autoanalyze history** — same for autoanalyze messages, with sample block and extended-statistics counters.
 - **Temporary file history** — captures every `log_temp_files` LOG message with file size and role information.
+- **Checkpoint history** — captures every checkpoint and restartpoint completion with detailed I/O and sync timings.
+- **Wraparound risk estimation** — samples XID and MXID at each checkpoint (at most once per hour) and provides a single-row view with live distances to the aggressive-vacuum and wraparound limits for both XID and MXID, plus rate-based ETAs that reflect whichever counter is closer to danger.
 - **Container resource limits** — reports cgroup v1/v2 CPU quota and memory hard limit for the PostgreSQL process.
 
 ---
@@ -65,12 +67,12 @@ To capture temporary file events:
 log_temp_files = 0                # log every temporary file creation
 ```
 
-### GUC parameter
+### GUC parameters
 
 | Parameter | Type | Default | Scope | Description |
 |---|---|---|---|---|
 | `pg_datasentinel.enabled` | `bool` | `on` | `superuser` | Enable or disable log message capture at runtime. When `off`, the hook returns immediately without writing to any ring buffer. |
-| `pg_datasentinel.max` | `int` | `5000` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files, checkpoints). When full, the oldest entry is overwritten. Requires a server restart. |
+| `pg_datasentinel.max` | `int` | `5000` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files, checkpoints, XID snapshots). When full, the oldest entry is overwritten. Requires a server restart. |
 
 ---
 
@@ -88,7 +90,7 @@ CREATE EXTENSION pg_datasentinel;
 
 ### `ds_stat_activity`
 
-Extends `pg_stat_activity` with three additional columns: `memory_bytes` and `temp_bytes` populated from `/proc/<pid>/statm` and `/proc/<pid>/fd/`, and `plan_id` obtained from PostgreSQL backend status (PostgreSQL 18+ only).
+Extends `pg_stat_activity` with three additional columns populated from `/proc/<pid>/statm` and `/proc/<pid>/fd/`.
 
 | Column | Type | Description |
 |---|---|---|
@@ -118,7 +120,7 @@ A ring buffer of the last `pg_datasentinel.max` autovacuum LOG messages. The mes
 | `relname` | `text` | Name of the vacuumed table (`NULL` if not parsed). |
 | `relid` | `oid` | OID of the relation (`NULL` if not resolved). |
 | `heap_pages` | `int8` | Total heap pages from `pg_stat_progress_vacuum` at the time of the log message. |
-| `pages_removed` | `int8` | Pages removed (from log message). |
+| `pages_removed` | `int8` | Pages removed. |
 | `pages_remain` | `int8` | Pages remaining after vacuum. |
 | `pages_scanned` | `int8` | Pages scanned. |
 | `tuples_removed` | `int8` | Dead tuples removed. |
@@ -126,15 +128,15 @@ A ring buffer of the last `pg_datasentinel.max` autovacuum LOG messages. The mes
 | `user_cpu` | `float8` | User CPU time in seconds. |
 | `sys_cpu` | `float8` | System CPU time in seconds. |
 | `elapsed` | `float8` | Elapsed wall-clock time in seconds. |
+| `aggressive` | `bool` | `true` if this was an aggressive vacuum to prevent wraparound (`automatic aggressive vacuum`). |
 | `message` | `text` | Full raw LOG message text. |
 
 ```sql
 -- Recent autovacuum runs, slowest first
-SELECT logged_at, schemaname, relname, elapsed, tuples_removed
+SELECT logged_at, schemaname, relname, elapsed, tuples_removed, aggressive
 FROM ds_autovacuum_activity
 ORDER BY elapsed DESC;
 
--- Reset the buffer
 SELECT ds_autovacuum_activity_reset();
 ```
 
@@ -161,13 +163,11 @@ A ring buffer of the last `pg_datasentinel.max` autoanalyze LOG messages.
 | `message` | `text` | Full raw LOG message text. |
 
 ```sql
--- Tables that triggered autoanalyze recently
 SELECT logged_at, schemaname, relname, elapsed
 FROM ds_autoanalyze_activity
 ORDER BY logged_at DESC
 LIMIT 20;
 
--- Reset the buffer
 SELECT ds_autoanalyze_activity_reset();
 ```
 
@@ -188,41 +188,157 @@ A ring buffer of the last `pg_datasentinel.max` temporary-file LOG messages (emi
 | `message` | `text` | Full raw LOG message text. |
 
 ```sql
--- Largest temporary files
 SELECT logged_at, username, datname, pg_size_pretty(bytes) AS size
 FROM ds_tempfile_activity
 ORDER BY bytes DESC;
 
--- Reset the buffer
 SELECT ds_tempfile_activity_reset();
+```
+
+---
+
+### `ds_checkpoint_activity`
+
+A ring buffer of the last `pg_datasentinel.max` checkpoint and restartpoint completions. Metrics are read directly from `CheckpointStats` — no log text parsing required.
+
+| Column | Type | Description |
+|---|---|---|
+| `seq` | `int4` | Ordinal position in the buffer (1 = oldest). |
+| `logged_at` | `timestamptz` | Wall-clock time the checkpoint completed. |
+| `is_restartpoint` | `bool` | `true` for a restartpoint, `false` for a regular checkpoint. |
+| `start_t` | `timestamptz` | When the checkpoint started. |
+| `end_t` | `timestamptz` | When the checkpoint ended. |
+| `bufs_written` | `int4` | Dirty buffers written. |
+| `segs_added` | `int4` | WAL segments added. |
+| `segs_removed` | `int4` | WAL segments removed. |
+| `segs_recycled` | `int4` | WAL segments recycled. |
+| `write_time` | `float8` | Time spent writing buffers (seconds). |
+| `sync_time` | `float8` | Time spent syncing buffers (seconds). |
+| `total_time` | `float8` | Total checkpoint duration (seconds). |
+| `sync_rels` | `int4` | Number of relations synced. |
+| `longest_sync` | `float8` | Slowest single-relation sync (seconds). |
+| `average_sync` | `float8` | Average per-relation sync time (seconds). |
+| `message` | `text` | Full raw LOG message text. |
+
+```sql
+-- Slow checkpoints
+SELECT logged_at, total_time, bufs_written, write_time, sync_time
+FROM ds_checkpoint_activity
+ORDER BY total_time DESC
+LIMIT 10;
+
+SELECT ds_checkpoint_activity_reset();
+```
+
+---
+
+### `ds_wraparound_risk`
+
+Always returns exactly **one row**. Combines live data from PostgreSQL shared memory with rate information derived from hourly XID/MXID snapshots to estimate wraparound risk for both regular transactions and multixacts.
+
+Snapshots are taken automatically at each checkpoint, but no more than once per hour. The `eta_*` columns take the minimum across XID and MXID so a single value signals the nearest danger regardless of which counter is the bottleneck.
+
+| Column | Type | Description |
+|---|---|---|
+| `snapshot_count` | `int4` | Number of XID/MXID snapshots stored. |
+| `snapshot_span` | `interval` | Time elapsed between the oldest and newest snapshot (`NULL` if fewer than 2 snapshots). |
+| `txid_rate_per_sec` | `float8` | Estimated transaction rate in XIDs/second. `NULL` if fewer than 2 snapshots. |
+| `current_xid` | `int8` | Current next full transaction ID (epoch-aware). Live. |
+| `xids_to_aggressive_vacuum` | `int8` | XIDs remaining before autovacuum starts aggressive freezing. Live. |
+| `xids_to_wraparound` | `int8` | XIDs remaining before XID wraparound. Live. |
+| `mxid_rate_per_sec` | `float8` | Estimated multixact consumption rate in MXIDs/second. `NULL` if fewer than 2 snapshots. |
+| `current_mxid` | `int8` | Current next multixact ID. Live. |
+| `mxids_to_aggressive_vacuum` | `int8` | MXIDs remaining before autovacuum starts aggressive MXID freezing. Live. |
+| `mxids_to_wraparound` | `int8` | MXIDs remaining before MXID wraparound. Live. |
+| `oldest_xid_database` | `text` | Database with the oldest frozen XID. Live. |
+| `oldest_mxid_database` | `text` | Database with the oldest frozen MXID (catalog scan for minimum `datminmxid`). |
+| `eta_aggressive_vacuum` | `interval` | Estimated time until aggressive vacuuming begins — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
+| `eta_wraparound` | `interval` | Estimated time until wraparound risk — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
+
+```sql
+-- Current wraparound risk at a glance
+SELECT
+    snapshot_count,
+    snapshot_span,
+    current_xid, xids_to_aggressive_vacuum, xids_to_wraparound,
+    current_mxid, mxids_to_aggressive_vacuum, mxids_to_wraparound,
+    eta_aggressive_vacuum,
+    eta_wraparound
+FROM ds_wraparound_risk;
+```
+
+The raw hourly snapshots are available in `ds_xid_snapshots` for trending or external alerting:
+
+```sql
+SELECT seq, logged_at, next_xid, next_mxid
+FROM ds_xid_snapshots
+ORDER BY seq;
 ```
 
 ---
 
 ### `ds_container_resources`
 
-A single-row view that reports the cgroup resource limits applied to the PostgreSQL process. All columns are `NULL` when no cgroup limit is configured or when the system does not use cgroups.
-
-Supports both cgroup v1 and cgroup v2.
+A single-row view that reports the cgroup resource limits applied to the PostgreSQL process. All columns are `NULL` when no cgroup limit is configured or when the system does not use cgroups. Supports both cgroup v1 and cgroup v2.
 
 | Column | Type | Description |
 |---|---|---|
-| `cgroup_version` | `int4` | Cgroup version in use (`1` or `2`). `NULL` if not running under cgroups. |
+| `cgroup_version` | `int4` | Cgroup version in use (`1` or `2`). `NULL` if not under cgroups. |
 | `cpu_limit` | `float8` | Hard CPU quota in fractional CPUs (e.g., `2.0` = 2 vCPUs). `NULL` if unlimited. |
 | `mem_limit_bytes` | `int8` | Hard memory limit in bytes. `NULL` if unlimited. |
 
 ```sql
-SELECT cgroup_version,
-       cpu_limit,
-       pg_size_pretty(mem_limit_bytes) AS memory_limit
+SELECT cgroup_version, cpu_limit, pg_size_pretty(mem_limit_bytes) AS memory_limit
 FROM ds_container_resources;
 ```
 
 ---
 
-## Testing
+### `ds_activity_summary`
 
-The regression suite creates the extension inside a temporary PostgreSQL instance and runs four test scripts: `init`, `autovacuum`, `autoanalyze`, and `tempfiles`.
+Always returns exactly **one row** with a three-column summary (count, oldest, latest) for each of the four ring buffers. Useful for a quick health-check dashboard or alerting.
+
+| Column | Type | Description |
+|---|---|---|
+| `autovacuum_count` | `int4` | Number of autovacuum entries currently in the buffer. |
+| `autovacuum_oldest` | `timestamptz` | Timestamp of the oldest captured autovacuum. `NULL` if the buffer is empty. |
+| `autovacuum_latest` | `timestamptz` | Timestamp of the most recent captured autovacuum. |
+| `autoanalyze_count` | `int4` | Number of autoanalyze entries in the buffer. |
+| `autoanalyze_oldest` | `timestamptz` | Timestamp of the oldest captured autoanalyze. |
+| `autoanalyze_latest` | `timestamptz` | Timestamp of the most recent captured autoanalyze. |
+| `checkpoint_count` | `int4` | Number of checkpoint entries in the buffer. |
+| `checkpoint_oldest` | `timestamptz` | Timestamp of the oldest captured checkpoint. |
+| `checkpoint_latest` | `timestamptz` | Timestamp of the most recent captured checkpoint. |
+| `tempfile_count` | `int4` | Number of temporary-file entries in the buffer. |
+| `tempfile_oldest` | `timestamptz` | Timestamp of the oldest captured temporary-file event. |
+| `tempfile_latest` | `timestamptz` | Timestamp of the most recent captured temporary-file event. |
+
+```sql
+SELECT * FROM ds_activity_summary;
+```
+
+---
+
+## Utility Functions
+
+| Function | Description |
+|---|---|
+| `ds_autovacuum_activity_reset()` | Clear the autovacuum ring buffer. |
+| `ds_autoanalyze_activity_reset()` | Clear the autoanalyze ring buffer. |
+| `ds_tempfile_activity_reset()` | Clear the temporary-file ring buffer. |
+| `ds_checkpoint_activity_reset()` | Clear the checkpoint ring buffer. |
+| `ds_activity_reset_all()` | Clear all ring buffers at once (autovacuum, autoanalyze, temp files, checkpoints, XID snapshots). |
+
+```sql
+-- Pause all capture, flush all buffers, then resume
+SET pg_datasentinel.enabled = off;
+SELECT ds_activity_reset_all();
+SET pg_datasentinel.enabled = on;
+```
+
+---
+
+## Testing
 
 ```bash
 make installcheck USE_PGXS=1
@@ -238,7 +354,7 @@ autovacuum_naptime = 1s
 
 ### Unit tests for internal parsing functions
 
-A companion test module exercises the C-level message-parsing functions (`pgds_parse_table_from_message`, `pgds_parse_vacuum_stats`, `pgds_parse_cpu_stats`) independently of a running PostgreSQL server:
+A companion test module exercises the C-level message-parsing functions (`pgds_parse_table_from_message`, `pgds_parse_vacuum_stats`, `pgds_parse_cpu_stats`) without requiring a live PostgreSQL cluster:
 
 ```bash
 cd test
@@ -256,15 +372,21 @@ shared_preload_libraries
         v
    _PG_init()
         |
-        +-- DefineCustomIntVariable("pg_datasentinel.max")
-        +-- shmem_request_hook  -> allocate 3 ring buffers in shared memory
+        +-- pg_datasentinel.enabled  (GUC, runtime toggle)
+        +-- pg_datasentinel.max      (GUC, ring buffer capacity)
+        +-- shmem_request_hook  -> allocate 5 ring buffers in shared memory
         +-- shmem_startup_hook  -> initialise ring buffer headers + LWLocks
         +-- emit_log_hook       -> intercept LOG messages
                                       |
-                    +-----------------+-----------------+
-                    |                 |                 |
-             autovacuum           autoanalyze       temp files
-             ring buffer          ring buffer       ring buffer
+             +------------------------+------------------------+----------+
+             |                        |                        |          |
+        autovacuum               autoanalyze             temp files  checkpoints
+        ring buffer              ring buffer             ring buffer ring buffer
+                                                                          |
+                                                                    (at most 1/hour)
+                                                                          |
+                                                                   XID snapshots
+                                                                   ring buffer
 ```
 
 Each ring buffer is a fixed-size circular array stored in PostgreSQL shared memory, protected by a dedicated LWLock. When the buffer is full, the oldest entry is silently overwritten so that the most recent `pg_datasentinel.max` events are always retained. No background worker is required.
