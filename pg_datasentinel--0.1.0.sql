@@ -146,3 +146,38 @@ CREATE FUNCTION ds_activity_reset_all()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
+
+
+CREATE FUNCTION ds_xid_snapshot_msgs(
+    OUT seq               int4,
+    OUT logged_at         timestamptz,
+    OUT next_xid          int8,
+    OUT next_mxid         int8,
+    OUT oldest_xid_db     oid
+)
+RETURNS SETOF record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_xid_snapshots AS
+    SELECT * FROM ds_xid_snapshot_msgs();
+
+
+CREATE FUNCTION ds_wraparound_risk_info(
+    OUT snapshot_count              int4,
+    OUT oldest_xid_database         text,
+    OUT xids_to_aggressive_vacuum   int8,
+    OUT xids_to_wraparound          int8,
+    OUT oldest_snapshot_at          timestamptz,
+    OUT newest_snapshot_at          timestamptz,
+    OUT txid_rate_per_sec           float8,
+    OUT eta_aggressive_vacuum       interval,
+    OUT eta_wraparound              interval,
+    OUT mxid_rate_per_sec           float8
+)
+RETURNS record
+AS 'MODULE_PATHNAME'
+LANGUAGE C VOLATILE;
+
+CREATE VIEW ds_wraparound_risk AS
+    SELECT * FROM ds_wraparound_risk_info();

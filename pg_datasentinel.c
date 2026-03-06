@@ -18,6 +18,8 @@
 #include "utils/lsyscache.h"
 #include "tcop/utility.h"
 #include "access/xlog.h"
+#include "access/transam.h"
+#include "access/multixact.h"
 #include "pgds_linux.h"
 #include "pgds_utils.h"
 
@@ -46,6 +48,12 @@ void		_PG_fini(void);
 										 * sync_rels, longest_sync, average_sync,
 										 * message */
 #define PGDS_CHECKPOINT_MSG_LEN	512		/* max length of a stored checkpoint log message */
+#define DS_XID_SNAPSHOT_COLS	5		/* seq, logged_at, next_xid, next_mxid, oldest_xid_db */
+#define DS_WRAPAROUND_RISK_COLS	10		/* snapshot_count, oldest_snapshot_at, newest_snapshot_at,
+										 * oldest_xid_database, txid_rate_per_sec,
+										 * xids_to_aggressive_vacuum, xids_to_wraparound,
+										 * eta_aggressive_vacuum, eta_wraparound,
+										 * mxid_rate_per_sec */
 
 /*
  * One slot in the ring buffer.
@@ -185,6 +193,30 @@ typedef struct PgdsCheckpointSharedState
 	PgdsCheckpointEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } PgdsCheckpointSharedState;
 
+/*
+ * One slot in the XID snapshot ring buffer.
+ * Captured at most once per hour, triggered by every checkpoint.
+ * Stores the epoch-aware XID and MXID so that the view can compute
+ * a transaction-rate and estimate time-to-wraparound.
+ */
+typedef struct PgdsXidSnapshotEntry
+{
+	TimestampTz	logged_at;		/* wall-clock time of the snapshot */
+	int64		next_xid;		/* U64FromFullTransactionId(ReadNextFullTransactionId()) */
+	int64		next_mxid;		/* (int64) ReadNextMultiXactId() */
+	Oid			oldest_xid_db;	/* TransamVariables->oldestXidDB */
+} PgdsXidSnapshotEntry;
+
+typedef struct PgdsXidSnapshotSharedState
+{
+	LWLock	   *lock;
+	int			head;
+	int			tail;
+	int			count;
+	int			max;
+	PgdsXidSnapshotEntry entries[FLEXIBLE_ARRAY_MEMBER];
+} PgdsXidSnapshotSharedState;
+
 /* Saved hook values in case of unload */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static emit_log_hook_type prev_emit_log_hook = NULL;
@@ -197,11 +229,13 @@ static PgdsAutovacuumSharedState *pgds_autovacuum = NULL;
 static PgdsAutoanalyzeSharedState *pgds_autoanalyze = NULL;
 static PgdsTempfileSharedState *pgds_tempfile = NULL;
 static PgdsCheckpointSharedState *pgds_checkpoint = NULL;
+static PgdsXidSnapshotSharedState *pgds_xid_snapshot = NULL;
 
 static Size pgds_memsize(void);
 static Size pgds_analyze_memsize(void);
 static Size pgds_tempfile_memsize(void);
 static Size pgds_checkpoint_memsize(void);
+static Size pgds_xid_snapshot_memsize(void);
 static void pgds_shmem_request(void);
 static void pgds_shmem_startup(void);
 static void pgds_emit_log(ErrorData *edata);
@@ -209,6 +243,7 @@ static void pgds_log_autovacuum(ErrorData *edata);
 static void pgds_log_autoanalyze(ErrorData *edata);
 static void pgds_log_tempfile(ErrorData *edata);
 static void pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint);
+static void pgds_log_xid_snapshot(void);
 
 
 static int	max_actions;		/* max # actions to track */
@@ -223,6 +258,8 @@ PG_FUNCTION_INFO_V1(ds_tempfile_activity_reset);
 PG_FUNCTION_INFO_V1(ds_checkpoint_msgs);
 PG_FUNCTION_INFO_V1(ds_checkpoint_activity_reset);
 PG_FUNCTION_INFO_V1(ds_activity_reset_all);
+PG_FUNCTION_INFO_V1(ds_xid_snapshot_msgs);
+PG_FUNCTION_INFO_V1(ds_wraparound_risk_info);
 PG_FUNCTION_INFO_V1(ds_container_resource_info);
 
 #define DS_CGROUP_COLS	3	/* cgroup_version, cpu_limit, mem_limit_bytes */
@@ -601,9 +638,251 @@ ds_activity_reset_all(PG_FUNCTION_ARGS)
 		LWLockRelease(pgds_checkpoint->lock);
 	}
 
+	if (pgds_xid_snapshot != NULL)
+	{
+		LWLockAcquire(pgds_xid_snapshot->lock, LW_EXCLUSIVE);
+		pgds_xid_snapshot->head  = 0;
+		pgds_xid_snapshot->tail  = 0;
+		pgds_xid_snapshot->count = 0;
+		LWLockRelease(pgds_xid_snapshot->lock);
+	}
+
 	PG_RETURN_VOID();
 }
 
+
+/*
+ * ds_xid_snapshot_msgs: SRF returning the raw XID snapshot ring buffer.
+ * Intended for diagnostics; the ds_wraparound_risk view is the primary interface.
+ */
+Datum
+ds_xid_snapshot_msgs(PG_FUNCTION_ARGS)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	int			count;
+	int			head;
+	int			max;
+	int			a;
+
+	InitMaterializedSRF(fcinfo, 0);
+
+	if (pgds_xid_snapshot == NULL)
+		return (Datum) 0;
+
+	LWLockAcquire(pgds_xid_snapshot->lock, LW_SHARED);
+
+	count = pgds_xid_snapshot->count;
+	head  = pgds_xid_snapshot->head;
+	max   = pgds_xid_snapshot->max;
+
+	for (a = 0; a < count; a++)
+	{
+		int					idx = (head + a) % max;
+		int					i = 0;
+		Datum				values[DS_XID_SNAPSHOT_COLS];
+		bool				nulls[DS_XID_SNAPSHOT_COLS];
+		PgdsXidSnapshotEntry *e = &pgds_xid_snapshot->entries[idx];
+
+		memset(nulls, 0, sizeof(nulls));
+		values[i++] = Int32GetDatum(a + 1);
+		values[i++] = TimestampTzGetDatum(e->logged_at);
+		values[i++] = Int64GetDatum(e->next_xid);
+		values[i++] = Int64GetDatum(e->next_mxid);
+		if (OidIsValid(e->oldest_xid_db))
+			values[i++] = ObjectIdGetDatum(e->oldest_xid_db);
+		else
+			nulls[i++] = true;
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	}
+
+	LWLockRelease(pgds_xid_snapshot->lock);
+
+	return (Datum) 0;
+}
+
+/*
+ * Build a palloc'd Interval from a duration expressed in seconds.
+ * Negative values are clamped to zero (should not happen in practice).
+ */
+static Interval *
+secs_to_interval(double secs)
+{
+	Interval   *iv = (Interval *) palloc(sizeof(Interval));
+
+	if (secs < 0)
+		secs = 0;
+	iv->month = 0;
+	iv->day   = (int32) (secs / 86400.0);
+	iv->time  = (int64) ((secs - iv->day * 86400.0) * USECS_PER_SEC);
+	return iv;
+}
+
+/*
+ * ds_wraparound_risk_info: always returns exactly one composite row.
+ *
+ * Rate is derived from the oldest vs newest XID snapshot (ring buffer).
+ * Current "distance to limits" comes from TransamVariables, which is
+ * updated by autovacuum and is always available without catalog access.
+ * The database name lookup (get_database_name) works because this function
+ * is only callable from a regular backend, not the checkpointer.
+ */
+Datum
+ds_wraparound_risk_info(PG_FUNCTION_ARGS)
+{
+	TupleDesc				tupdesc;
+	Datum					values[DS_WRAPAROUND_RISK_COLS];
+	bool					nulls[DS_WRAPAROUND_RISK_COLS];
+	HeapTuple				tuple;
+	int						i = 0;
+
+	/* Current XID state from shared memory */
+	FullTransactionId		cur_full_xid;
+	TransactionId			cur_xid;
+	TransactionId			vac_limit;
+	TransactionId			wrap_limit;
+	int64					xids_to_vac;
+	int64					xids_to_wrap;
+
+	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("function returning record called in context "
+						"that cannot accept type record")));
+	tupdesc = BlessTupleDesc(tupdesc);
+
+	memset(nulls, true, sizeof(nulls));
+	memset(values, 0, sizeof(values));
+
+	/* snapshot_count — always populated, even when 0 */
+	if (pgds_xid_snapshot != NULL)
+	{
+		LWLockAcquire(pgds_xid_snapshot->lock, LW_SHARED);
+		values[i] = Int32GetDatum(pgds_xid_snapshot->count);
+		nulls[i]  = false;
+		LWLockRelease(pgds_xid_snapshot->lock);
+	}
+	else
+	{
+		values[i] = Int32GetDatum(0);
+		nulls[i]  = false;
+	}
+	i++;  /* i=1 */
+
+	/*
+	 * Read current XID limits from TransamVariables.  These are updated
+	 * by autovacuum (SetTransactionIdLimit) so they reflect the true oldest
+	 * frozen XID across all databases.
+	 */
+	cur_full_xid = ReadNextFullTransactionId();
+	cur_xid      = XidFromFullTransactionId(cur_full_xid);
+	vac_limit    = TransamVariables->xidVacLimit;
+	wrap_limit   = TransamVariables->xidWrapLimit;
+
+	/*
+	 * XID arithmetic is modular (uint32 space).  Casting the difference to
+	 * int32 handles the wrap correctly: a positive result means we have that
+	 * many XIDs left; negative means the limit has already been crossed.
+	 */
+	xids_to_vac  = (int64) (int32) (vac_limit  - cur_xid);
+	xids_to_wrap = (int64) (int32) (wrap_limit - cur_xid);
+
+	/* oldest_xid_database from current TransamVariables */
+	if (OidIsValid(TransamVariables->oldestXidDB))
+	{
+		char *dbname = get_database_name(TransamVariables->oldestXidDB);
+		if (dbname)
+		{
+			values[i] = CStringGetTextDatum(dbname);
+			nulls[i]  = false;
+		}
+	}
+	/* i=1: oldest_xid_database */
+	i++;  /* i=2 */
+
+	/* xids_to_aggressive_vacuum */
+	if (xids_to_vac > 0)
+	{
+		values[i] = Int64GetDatum(xids_to_vac);
+		nulls[i]  = false;
+	}
+	i++;  /* i=3 */
+
+	/* xids_to_wraparound */
+	if (xids_to_wrap > 0)
+	{
+		values[i] = Int64GetDatum(xids_to_wrap);
+		nulls[i]  = false;
+	}
+	i++;  /* i=4 */
+
+	/* Need at least 2 snapshots to compute a rate */
+	if (pgds_xid_snapshot != NULL && pgds_xid_snapshot->count >= 2)
+	{
+		PgdsXidSnapshotEntry oldest_e,
+							 newest_e;
+		double				 elapsed_sec;
+		double				 txid_rate;
+		double				 mxid_rate;
+
+		LWLockAcquire(pgds_xid_snapshot->lock, LW_SHARED);
+		oldest_e = pgds_xid_snapshot->entries[pgds_xid_snapshot->head];
+		newest_e = pgds_xid_snapshot->entries[
+			(pgds_xid_snapshot->tail + pgds_xid_snapshot->max - 1)
+			% pgds_xid_snapshot->max];
+		LWLockRelease(pgds_xid_snapshot->lock);
+
+		/* oldest_snapshot_at */
+		values[i] = TimestampTzGetDatum(oldest_e.logged_at);
+		nulls[i]  = false;
+		i++;  /* i=5 */
+
+		/* newest_snapshot_at */
+		values[i] = TimestampTzGetDatum(newest_e.logged_at);
+		nulls[i]  = false;
+		i++;  /* i=6 */
+
+		elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
+					  / USECS_PER_SEC;
+
+		if (elapsed_sec > 0)
+		{
+			txid_rate = (double) (newest_e.next_xid - oldest_e.next_xid)
+						/ elapsed_sec;
+			mxid_rate = (double) (newest_e.next_mxid - oldest_e.next_mxid)
+						/ elapsed_sec;
+
+			/* txid_rate_per_sec */
+			values[i] = Float8GetDatum(txid_rate);
+			nulls[i]  = false;
+			i++;  /* i=7 */
+
+			/* eta_aggressive_vacuum */
+			if (xids_to_vac > 0 && txid_rate > 0)
+			{
+				values[i] = IntervalPGetDatum(
+					secs_to_interval((double) xids_to_vac / txid_rate));
+				nulls[i] = false;
+			}
+			i++;  /* i=8 */
+
+			/* eta_wraparound */
+			if (xids_to_wrap > 0 && txid_rate > 0)
+			{
+				values[i] = IntervalPGetDatum(
+					secs_to_interval((double) xids_to_wrap / txid_rate));
+				nulls[i] = false;
+			}
+			i++;  /* i=9 */
+
+			/* mxid_rate_per_sec */
+			values[i] = Float8GetDatum(mxid_rate);
+			nulls[i]  = false;
+		}
+	}
+
+	tuple = heap_form_tuple(tupdesc, values, nulls);
+	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
+}
 
 /*
  * ds_container_resource_info: return a single row describing the cgroup resource limits
@@ -689,6 +968,13 @@ pgds_checkpoint_memsize(void)
 					mul_size(max_actions, sizeof(PgdsCheckpointEntry)));
 }
 
+static Size
+pgds_xid_snapshot_memsize(void)
+{
+	return add_size(offsetof(PgdsXidSnapshotSharedState, entries),
+					mul_size(max_actions, sizeof(PgdsXidSnapshotEntry)));
+}
+
 /*
  * pgds_shmem_request: request shared memory to the core.
  * Called as a hook in PG15 or later, otherwise called from _PG_init().
@@ -700,11 +986,12 @@ pgds_shmem_request(void)
 	if (prev_shmem_request_hook)
 		prev_shmem_request_hook();
 #endif
-	RequestAddinShmemSpace(add_size(add_size(add_size(pgds_memsize(),
+	RequestAddinShmemSpace(add_size(add_size(add_size(add_size(pgds_memsize(),
 												pgds_analyze_memsize()),
 											pgds_tempfile_memsize()),
-								   pgds_checkpoint_memsize()));
-	RequestNamedLWLockTranche("pgds", 4);
+								   pgds_checkpoint_memsize()),
+								   pgds_xid_snapshot_memsize()));
+	RequestNamedLWLockTranche("pgds", 5);
 }
 
 /*
@@ -765,6 +1052,17 @@ pgds_shmem_startup(void)
 		pgds_checkpoint->count = 0;
 		pgds_checkpoint->max   = max_actions;
 		memset(pgds_checkpoint->entries, 0, mul_size(max_actions, sizeof(PgdsCheckpointEntry)));
+	}
+
+	pgds_xid_snapshot = ShmemInitStruct("pgds_xid_snapshot", pgds_xid_snapshot_memsize(), &found);
+	if (!found)
+	{
+		pgds_xid_snapshot->lock  = &(GetNamedLWLockTranche("pgds"))[4].lock;
+		pgds_xid_snapshot->head  = 0;
+		pgds_xid_snapshot->tail  = 0;
+		pgds_xid_snapshot->count = 0;
+		pgds_xid_snapshot->max   = max_actions;
+		memset(pgds_xid_snapshot->entries, 0, mul_size(max_actions, sizeof(PgdsXidSnapshotEntry)));
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -1079,8 +1377,58 @@ pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint)
 		pgds_checkpoint->head = (pgds_checkpoint->head + 1) % pgds_checkpoint->max;
 
 	LWLockRelease(pgds_checkpoint->lock);
+
+	/* Capture an XID snapshot at most once per hour */
+	pgds_log_xid_snapshot();
 }
 
+/*
+ * pgds_log_xid_snapshot: record the current next-XID and next-MXID in the
+ * XID snapshot ring buffer, but only if the last entry is older than 1 hour.
+ * Called from pgds_log_checkpoint() after every checkpoint/restartpoint.
+ */
+static void
+pgds_log_xid_snapshot(void)
+{
+	PgdsXidSnapshotEntry *e;
+	TimestampTz	now;
+
+	if (pgds_xid_snapshot == NULL)
+		return;
+
+	now = GetCurrentTimestamp();
+
+	LWLockAcquire(pgds_xid_snapshot->lock, LW_EXCLUSIVE);
+
+	/* Skip if the last snapshot was taken less than 1 hour ago */
+	if (pgds_xid_snapshot->count > 0)
+	{
+		int			last_idx = (pgds_xid_snapshot->tail + pgds_xid_snapshot->max - 1)
+							   % pgds_xid_snapshot->max;
+		TimestampTz	last_at  = pgds_xid_snapshot->entries[last_idx].logged_at;
+
+		if (now - last_at < (int64) 3600 * USECS_PER_SEC)
+		{
+			LWLockRelease(pgds_xid_snapshot->lock);
+			return;
+		}
+	}
+
+	e = &pgds_xid_snapshot->entries[pgds_xid_snapshot->tail];
+
+	e->logged_at     = now;
+	e->next_xid      = (int64) U64FromFullTransactionId(ReadNextFullTransactionId());
+	e->next_mxid     = (int64) ReadNextMultiXactId();
+	e->oldest_xid_db = TransamVariables->oldestXidDB;
+
+	pgds_xid_snapshot->tail = (pgds_xid_snapshot->tail + 1) % pgds_xid_snapshot->max;
+	if (pgds_xid_snapshot->count < pgds_xid_snapshot->max)
+		pgds_xid_snapshot->count++;
+	else
+		pgds_xid_snapshot->head = (pgds_xid_snapshot->head + 1) % pgds_xid_snapshot->max;
+
+	LWLockRelease(pgds_xid_snapshot->lock);
+}
 
 /*
  * emit_log_hook: intercepts every log message emitted by the backend.
