@@ -212,6 +212,7 @@ static void pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint);
 
 
 static int	max_actions;		/* max # actions to track */
+static bool	pgds_enabled;		/* enable/disable log capture at runtime */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
@@ -1048,6 +1049,10 @@ pgds_emit_log(ErrorData *edata)
 	if (prev_emit_log_hook)
 		prev_emit_log_hook(edata);
 
+	/* Skip all capture when disabled */
+	if (!pgds_enabled)
+		return;
+
 	/* Only interested in LOG-level messages going to the server log */
 	if (edata->elevel != LOG || !edata->output_to_server)
 		return;
@@ -1112,6 +1117,17 @@ _PG_init(void)
 	/*
 	 * Define custom GUC variables.
 	 */
+	DefineCustomBoolVariable("pg_datasentinel.enabled",
+							 "Enables or disables log message capture by pg_datasentinel.",
+							 NULL,
+							 &pgds_enabled,
+							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomIntVariable("pg_datasentinel.max",
 							"Sets the maximum number of actions tracked by pg_datasentinel.",
 							NULL,
