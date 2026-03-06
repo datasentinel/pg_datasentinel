@@ -14,7 +14,7 @@ pgds_is_dir_accessible(const char *path)
 
 	if (!dirp)
 	{
-		elog(DEBUG1, "Error opening directory \"%s\"", path);
+		elog(DEBUG1, "Error opening directory \"%s\": %m", path);
 		return false;
 	}
 	closedir(dirp);
@@ -36,7 +36,7 @@ pgds_get_temp_file_bytes(int pid)
 	dir = opendir(fd_path);
 	if (dir == NULL)
 	{
-		elog(DEBUG1, "Error opening directory \"%s\"", fd_path);
+		elog(DEBUG1, "Error opening directory \"%s\": %m", fd_path);
 		return -1;
 	}
 
