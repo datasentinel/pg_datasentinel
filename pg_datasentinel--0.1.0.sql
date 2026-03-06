@@ -148,6 +148,23 @@ RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
 
+CREATE VIEW ds_activity_summary AS
+WITH
+    av AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_autovacuum_activity),
+    aa AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_autoanalyze_activity),
+    cp AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_checkpoint_activity),
+    tf AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
+           FROM ds_tempfile_activity)
+SELECT
+    av.cnt::int4  AS autovacuum_count,   av.oldest AS autovacuum_oldest,   av.latest AS autovacuum_latest,
+    aa.cnt::int4  AS autoanalyze_count,  aa.oldest AS autoanalyze_oldest,  aa.latest AS autoanalyze_latest,
+    cp.cnt::int4  AS checkpoint_count,   cp.oldest AS checkpoint_oldest,   cp.latest AS checkpoint_latest,
+    tf.cnt::int4  AS tempfile_count,     tf.oldest AS tempfile_oldest,     tf.latest AS tempfile_latest
+FROM av, aa, cp, tf;
+
 
 CREATE FUNCTION ds_xid_snapshot_msgs(
     OUT seq               int4,

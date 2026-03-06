@@ -294,6 +294,31 @@ FROM ds_container_resources;
 
 ---
 
+### `ds_activity_summary`
+
+Always returns exactly **one row** with a three-column summary (count, oldest, latest) for each of the four ring buffers. Useful for a quick health-check dashboard or alerting.
+
+| Column | Type | Description |
+|---|---|---|
+| `autovacuum_count` | `int4` | Number of autovacuum entries currently in the buffer. |
+| `autovacuum_oldest` | `timestamptz` | Timestamp of the oldest captured autovacuum. `NULL` if the buffer is empty. |
+| `autovacuum_latest` | `timestamptz` | Timestamp of the most recent captured autovacuum. |
+| `autoanalyze_count` | `int4` | Number of autoanalyze entries in the buffer. |
+| `autoanalyze_oldest` | `timestamptz` | Timestamp of the oldest captured autoanalyze. |
+| `autoanalyze_latest` | `timestamptz` | Timestamp of the most recent captured autoanalyze. |
+| `checkpoint_count` | `int4` | Number of checkpoint entries in the buffer. |
+| `checkpoint_oldest` | `timestamptz` | Timestamp of the oldest captured checkpoint. |
+| `checkpoint_latest` | `timestamptz` | Timestamp of the most recent captured checkpoint. |
+| `tempfile_count` | `int4` | Number of temporary-file entries in the buffer. |
+| `tempfile_oldest` | `timestamptz` | Timestamp of the oldest captured temporary-file event. |
+| `tempfile_latest` | `timestamptz` | Timestamp of the most recent captured temporary-file event. |
+
+```sql
+SELECT * FROM ds_activity_summary;
+```
+
+---
+
 ## Utility Functions
 
 | Function | Description |

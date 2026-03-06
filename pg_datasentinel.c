@@ -961,7 +961,15 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 
 		if (elapsed_sec > 0)
 		{
-			double mxid_rate = (double) (newest_e.next_mxid - oldest_e.next_mxid)
+			/*
+			 * MultiXactId is a wrapping uint32 counter stored as int64.
+			 * Cast both values back to uint32 before subtracting, then
+			 * interpret the result as int32 — identical to the modular
+			 * arithmetic used for XID distance — so a wrap between
+			 * snapshots produces the correct positive delta.
+			 */
+			double mxid_rate = (double) (int32) ((uint32) newest_e.next_mxid
+												 - (uint32) oldest_e.next_mxid)
 							   / elapsed_sec;
 
 			/* [13] mxid_rate_per_sec */
