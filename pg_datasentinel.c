@@ -17,6 +17,7 @@
 #include "catalog/namespace.h"
 #include "utils/lsyscache.h"
 #include "tcop/utility.h"
+#include "access/xlog.h"
 #include "pgds_linux.h"
 #include "pgds_utils.h"
 
@@ -38,6 +39,13 @@ void		_PG_fini(void);
 #define PGDS_AUTOANALYZE_MSG_LEN	1024	/* max length of a stored autoanalyze log message */
 #define DS_TEMPFILE_COLS		7		/* seq, logged_at, datname, username, pid, bytes, message */
 #define PGDS_TEMPFILE_MSG_LEN	512		/* max length of a stored temp file log message */
+#define DS_CHECKPOINT_COLS		16		/* seq, logged_at, is_restartpoint,
+										 * start_t, end_t, bufs_written,
+										 * segs_added, segs_removed, segs_recycled,
+										 * write_time, sync_time, total_time,
+										 * sync_rels, longest_sync, average_sync,
+										 * message */
+#define PGDS_CHECKPOINT_MSG_LEN	512		/* max length of a stored checkpoint log message */
 
 /*
  * One slot in the ring buffer.
@@ -143,6 +151,40 @@ typedef struct PgdsTempfileSharedState
 	PgdsTempfileEntry entries[FLEXIBLE_ARRAY_MEMBER];
 } PgdsTempfileSharedState;
 
+/*
+ * One slot in the checkpoint ring buffer.
+ * Metrics are read directly from the CheckpointStats global (no text parsing).
+ * Fixed-size fields only — this struct lives in shared memory.
+ */
+typedef struct PgdsCheckpointEntry
+{
+	TimestampTz	logged_at;			/* wall-clock time the message was intercepted */
+	bool		is_restartpoint;	/* true = restartpoint, false = regular checkpoint */
+	TimestampTz	start_t;			/* CheckpointStats.ckpt_start_t */
+	TimestampTz	end_t;				/* CheckpointStats.ckpt_end_t */
+	int32		bufs_written;		/* CheckpointStats.ckpt_bufs_written */
+	int32		segs_added;			/* CheckpointStats.ckpt_segs_added */
+	int32		segs_removed;		/* CheckpointStats.ckpt_segs_removed */
+	int32		segs_recycled;		/* CheckpointStats.ckpt_segs_recycled */
+	double		write_time;			/* seconds: ckpt_write_t to ckpt_sync_t */
+	double		sync_time;			/* seconds: ckpt_sync_t to ckpt_sync_end_t */
+	double		total_time;			/* seconds: ckpt_start_t to ckpt_end_t */
+	int32		sync_rels;			/* CheckpointStats.ckpt_sync_rels */
+	double		longest_sync;		/* seconds (converted from microseconds) */
+	double		average_sync;		/* seconds (converted from microseconds) */
+	char		message[PGDS_CHECKPOINT_MSG_LEN];
+} PgdsCheckpointEntry;
+
+typedef struct PgdsCheckpointSharedState
+{
+	LWLock	   *lock;
+	int			head;
+	int			tail;
+	int			count;
+	int			max;
+	PgdsCheckpointEntry entries[FLEXIBLE_ARRAY_MEMBER];
+} PgdsCheckpointSharedState;
+
 /* Saved hook values in case of unload */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static emit_log_hook_type prev_emit_log_hook = NULL;
@@ -154,16 +196,19 @@ static shmem_request_hook_type prev_shmem_request_hook = NULL;
 static PgdsAutovacuumSharedState *pgds_autovacuum = NULL;
 static PgdsAutoanalyzeSharedState *pgds_autoanalyze = NULL;
 static PgdsTempfileSharedState *pgds_tempfile = NULL;
+static PgdsCheckpointSharedState *pgds_checkpoint = NULL;
 
 static Size pgds_memsize(void);
 static Size pgds_analyze_memsize(void);
 static Size pgds_tempfile_memsize(void);
+static Size pgds_checkpoint_memsize(void);
 static void pgds_shmem_request(void);
 static void pgds_shmem_startup(void);
 static void pgds_emit_log(ErrorData *edata);
 static void pgds_log_autovacuum(ErrorData *edata);
 static void pgds_log_autoanalyze(ErrorData *edata);
 static void pgds_log_tempfile(ErrorData *edata);
+static void pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint);
 
 
 static int	max_actions;		/* max # actions to track */
@@ -175,6 +220,8 @@ PG_FUNCTION_INFO_V1(ds_autoanalyze_msgs);
 PG_FUNCTION_INFO_V1(ds_autoanalyze_activity_reset);
 PG_FUNCTION_INFO_V1(ds_tempfile_msgs);
 PG_FUNCTION_INFO_V1(ds_tempfile_activity_reset);
+PG_FUNCTION_INFO_V1(ds_checkpoint_msgs);
+PG_FUNCTION_INFO_V1(ds_checkpoint_activity_reset);
 PG_FUNCTION_INFO_V1(ds_container_resource_info);
 
 #define DS_CGROUP_COLS	3	/* cgroup_version, cpu_limit, mem_limit_bytes */
@@ -438,6 +485,81 @@ ds_tempfile_activity_reset(PG_FUNCTION_ARGS)
 
 
 /*
+ * ds_checkpoint_msgs: return all checkpoint/restartpoint entries from the ring buffer.
+ */
+Datum
+ds_checkpoint_msgs(PG_FUNCTION_ARGS)
+{
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	int			count;
+	int			head;
+	int			max;
+	int			a;
+
+	InitMaterializedSRF(fcinfo, 0);
+
+	if (pgds_checkpoint == NULL)
+		return (Datum) 0;
+
+	LWLockAcquire(pgds_checkpoint->lock, LW_SHARED);
+
+	count = pgds_checkpoint->count;
+	head  = pgds_checkpoint->head;
+	max   = pgds_checkpoint->max;
+
+	for (a = 0; a < count; a++)
+	{
+		int					idx = (head + a) % max;
+		int					i = 0;
+		Datum				values[DS_CHECKPOINT_COLS];
+		bool				nulls[DS_CHECKPOINT_COLS];
+		PgdsCheckpointEntry *e = &pgds_checkpoint->entries[idx];
+
+		memset(nulls, 0, sizeof(nulls));
+		values[i++] = Int32GetDatum(a + 1);
+		values[i++] = TimestampTzGetDatum(e->logged_at);
+		values[i++] = BoolGetDatum(e->is_restartpoint);
+		values[i++] = TimestampTzGetDatum(e->start_t);
+		values[i++] = TimestampTzGetDatum(e->end_t);
+		values[i++] = Int32GetDatum(e->bufs_written);
+		values[i++] = Int32GetDatum(e->segs_added);
+		values[i++] = Int32GetDatum(e->segs_removed);
+		values[i++] = Int32GetDatum(e->segs_recycled);
+		values[i++] = Float8GetDatum(e->write_time);
+		values[i++] = Float8GetDatum(e->sync_time);
+		values[i++] = Float8GetDatum(e->total_time);
+		values[i++] = Int32GetDatum(e->sync_rels);
+		values[i++] = Float8GetDatum(e->longest_sync);
+		values[i++] = Float8GetDatum(e->average_sync);
+		values[i++] = CStringGetTextDatum(e->message);
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
+	}
+
+	LWLockRelease(pgds_checkpoint->lock);
+
+	return (Datum) 0;
+}
+
+/*
+ * ds_checkpoint_activity_reset: discard all entries from the checkpoint ring buffer.
+ */
+Datum
+ds_checkpoint_activity_reset(PG_FUNCTION_ARGS)
+{
+	if (pgds_checkpoint == NULL)
+		PG_RETURN_VOID();
+
+	LWLockAcquire(pgds_checkpoint->lock, LW_EXCLUSIVE);
+	pgds_checkpoint->head  = 0;
+	pgds_checkpoint->tail  = 0;
+	pgds_checkpoint->count = 0;
+	LWLockRelease(pgds_checkpoint->lock);
+
+	PG_RETURN_VOID();
+}
+
+
+/*
  * ds_container_resource_info: return a single row describing the cgroup resource limits
  * that apply to the calling PostgreSQL backend process.
  *
@@ -514,6 +636,13 @@ pgds_tempfile_memsize(void)
 					mul_size(max_actions, sizeof(PgdsTempfileEntry)));
 }
 
+static Size
+pgds_checkpoint_memsize(void)
+{
+	return add_size(offsetof(PgdsCheckpointSharedState, entries),
+					mul_size(max_actions, sizeof(PgdsCheckpointEntry)));
+}
+
 /*
  * pgds_shmem_request: request shared memory to the core.
  * Called as a hook in PG15 or later, otherwise called from _PG_init().
@@ -525,9 +654,11 @@ pgds_shmem_request(void)
 	if (prev_shmem_request_hook)
 		prev_shmem_request_hook();
 #endif
-	RequestAddinShmemSpace(add_size(add_size(pgds_memsize(), pgds_analyze_memsize()),
-								   pgds_tempfile_memsize()));
-	RequestNamedLWLockTranche("pgds", 3);
+	RequestAddinShmemSpace(add_size(add_size(add_size(pgds_memsize(),
+												pgds_analyze_memsize()),
+											pgds_tempfile_memsize()),
+								   pgds_checkpoint_memsize()));
+	RequestNamedLWLockTranche("pgds", 4);
 }
 
 /*
@@ -577,6 +708,17 @@ pgds_shmem_startup(void)
 		pgds_tempfile->count = 0;
 		pgds_tempfile->max   = max_actions;
 		memset(pgds_tempfile->entries, 0, mul_size(max_actions, sizeof(PgdsTempfileEntry)));
+	}
+
+	pgds_checkpoint = ShmemInitStruct("pgds_checkpoint", pgds_checkpoint_memsize(), &found);
+	if (!found)
+	{
+		pgds_checkpoint->lock  = &(GetNamedLWLockTranche("pgds"))[3].lock;
+		pgds_checkpoint->head  = 0;
+		pgds_checkpoint->tail  = 0;
+		pgds_checkpoint->count = 0;
+		pgds_checkpoint->max   = max_actions;
+		memset(pgds_checkpoint->entries, 0, mul_size(max_actions, sizeof(PgdsCheckpointEntry)));
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -841,6 +983,58 @@ pgds_log_tempfile(ErrorData *edata)
 	LWLockRelease(pgds_tempfile->lock);
 }
 
+/*
+ * pgds_log_checkpoint: capture a checkpoint or restartpoint complete message.
+ * All metrics are read directly from CheckpointStats (PGDLLIMPORT) — no text
+ * parsing required.  This function is called from within the emit_log_hook,
+ * synchronously on the same call stack as LogCheckpointEnd(), so
+ * CheckpointStats is fully populated at this point.
+ */
+static void
+pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint)
+{
+	PgdsCheckpointEntry *e;
+	uint64		avg_sync_time;
+
+	LWLockAcquire(pgds_checkpoint->lock, LW_EXCLUSIVE);
+
+	e = &pgds_checkpoint->entries[pgds_checkpoint->tail];
+
+	e->logged_at       = GetCurrentTimestamp();
+	e->is_restartpoint = is_restartpoint;
+	e->start_t         = CheckpointStats.ckpt_start_t;
+	e->end_t           = CheckpointStats.ckpt_end_t;
+	e->bufs_written    = CheckpointStats.ckpt_bufs_written;
+	e->segs_added      = CheckpointStats.ckpt_segs_added;
+	e->segs_removed    = CheckpointStats.ckpt_segs_removed;
+	e->segs_recycled   = CheckpointStats.ckpt_segs_recycled;
+	e->write_time      = (double) TimestampDifferenceMilliseconds(
+							CheckpointStats.ckpt_write_t,
+							CheckpointStats.ckpt_sync_t) / 1000.0;
+	e->sync_time       = (double) TimestampDifferenceMilliseconds(
+							CheckpointStats.ckpt_sync_t,
+							CheckpointStats.ckpt_sync_end_t) / 1000.0;
+	e->total_time      = (double) TimestampDifferenceMilliseconds(
+							CheckpointStats.ckpt_start_t,
+							CheckpointStats.ckpt_end_t) / 1000.0;
+	e->sync_rels       = CheckpointStats.ckpt_sync_rels;
+	/* ckpt_longest_sync and ckpt_agg_sync_time are in microseconds */
+	e->longest_sync    = (double) ((CheckpointStats.ckpt_longest_sync + 999) / 1000) / 1000.0;
+	avg_sync_time      = (CheckpointStats.ckpt_sync_rels > 0)
+		? CheckpointStats.ckpt_agg_sync_time / CheckpointStats.ckpt_sync_rels
+		: 0;
+	e->average_sync    = (double) ((avg_sync_time + 999) / 1000) / 1000.0;
+	strlcpy(e->message, edata->message, PGDS_CHECKPOINT_MSG_LEN);
+
+	pgds_checkpoint->tail = (pgds_checkpoint->tail + 1) % pgds_checkpoint->max;
+	if (pgds_checkpoint->count < pgds_checkpoint->max)
+		pgds_checkpoint->count++;
+	else
+		pgds_checkpoint->head = (pgds_checkpoint->head + 1) % pgds_checkpoint->max;
+
+	LWLockRelease(pgds_checkpoint->lock);
+}
+
 
 /*
  * emit_log_hook: intercepts every log message emitted by the backend.
@@ -861,13 +1055,28 @@ pgds_emit_log(ErrorData *edata)
 	if (edata->message == NULL)
 		return;
 
-	/* Route temporary-file messages via message_id */
-	if (edata->message_id != NULL &&
-		strcmp(edata->message_id, "temporary file: path \"%s\", size %lu") == 0)
+	/* Route checkpoint / restartpoint complete messages via message_id */
+	if (edata->message_id != NULL)
 	{
-		if (pgds_tempfile != NULL)
-			pgds_log_tempfile(edata);
-		return;
+		if (strncmp(edata->message_id, "checkpoint complete:", 19) == 0)
+		{
+			if (pgds_checkpoint != NULL)
+				pgds_log_checkpoint(edata, false);
+			return;
+		}
+		if (strncmp(edata->message_id, "restartpoint complete:", 21) == 0)
+		{
+			if (pgds_checkpoint != NULL)
+				pgds_log_checkpoint(edata, true);
+			return;
+		}
+		/* Route temporary-file messages via message_id */
+		if (strcmp(edata->message_id, "temporary file: path \"%s\", size %lu") == 0)
+		{
+			if (pgds_tempfile != NULL)
+				pgds_log_tempfile(edata);
+			return;
+		}
 	}
 
 	if (strstr(edata->message, "automatic") == NULL)
