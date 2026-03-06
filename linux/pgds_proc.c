@@ -85,12 +85,12 @@ pgds_get_rss_memory_pages(int pid)
 	{
 		long		size,
 					share,
-		text	   ,
+					text_pages,
 					lib,
 					data,
 					dt;
 
-		if (fscanf(fp, "%ld %ld %ld %ld %ld %ld %ld", &size, &rss, &share, &text, &lib, &data, &dt) != 7)
+		if (fscanf(fp, "%ld %ld %ld %ld %ld %ld %ld", &size, &rss, &share, &text_pages, &lib, &data, &dt) != 7)
 		{
 			rss = -1;
 		}
