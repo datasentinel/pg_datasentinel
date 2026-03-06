@@ -23,7 +23,10 @@
 #include "access/heapam.h"
 #include "catalog/pg_database.h"
 #include "postmaster/autovacuum.h"
-#include "pgds_linux.h"
+#ifdef __linux__
+#include "linux/pgds_proc.h"
+#include "linux/pgds_cgroup.h"
+#endif
 #include "pgds_utils.h"
 
 PG_MODULE_MAGIC;
@@ -32,7 +35,9 @@ PG_MODULE_MAGIC;
 void		_PG_init(void);
 void		_PG_fini(void);
 
+#ifdef __linux__
 #define PROC_VIRTUAL_FS    "/proc"
+#endif
 #define DS_STAT_IDS_COLS		4
 #define DS_AUTOVACUUM_COLS		17	/* seq, logged_at, datname, schemaname, relname, relid,
 								 * heap_pages, pages_removed, pages_remain, pages_scanned,
@@ -1027,7 +1032,6 @@ ds_container_resource_info(PG_FUNCTION_ARGS)
 	Datum			values[DS_CGROUP_COLS];
 	bool			nulls[DS_CGROUP_COLS];
 	HeapTuple		tuple;
-	PgdsCgroupInfo	cg;
 	int				i = 0;
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
@@ -1040,28 +1044,34 @@ ds_container_resource_info(PG_FUNCTION_ARGS)
 	memset(nulls, true, sizeof(nulls));
 	memset(values, 0, sizeof(values));
 
-	if (pgds_read_cgroup_info(&cg))
+#ifdef __linux__
 	{
-		/* cgroup_version */
-		values[i] = Int32GetDatum(cg.version);
-		nulls[i]  = false;
-		i++;
+		PgdsCgroupInfo	cg;
 
-		/* cpu_limit */
-		if (cg.cpu_limit_set)
+		if (pgds_read_cgroup_info(&cg))
 		{
-			values[i] = Float8GetDatum(cg.cpu_limit);
+			/* cgroup_version */
+			values[i] = Int32GetDatum(cg.version);
 			nulls[i]  = false;
-		}
-		i++;
+			i++;
 
-		/* mem_limit_bytes */
-		if (cg.mem_limit_set)
-		{
-			values[i] = Int64GetDatum(cg.mem_limit_bytes);
-			nulls[i]  = false;
+			/* cpu_limit */
+			if (cg.cpu_limit_set)
+			{
+				values[i] = Float8GetDatum(cg.cpu_limit);
+				nulls[i]  = false;
+			}
+			i++;
+
+			/* mem_limit_bytes */
+			if (cg.mem_limit_set)
+			{
+				values[i] = Int64GetDatum(cg.mem_limit_bytes);
+				nulls[i]  = false;
+			}
 		}
 	}
+#endif
 
 	tuple = heap_form_tuple(tupdesc, values, nulls);
 	PG_RETURN_DATUM(HeapTupleGetDatum(tuple));
@@ -1202,8 +1212,10 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
+#ifdef __linux__
 	long		page_size = sysconf(_SC_PAGESIZE);
 	bool		proc_accessible = pgds_is_dir_accessible(PROC_VIRTUAL_FS);
+#endif
 
 
 	InitMaterializedSRF(fcinfo, 0);
@@ -1224,8 +1236,9 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 
 		/*
 		 * memory usage and temp usage are only available if we can access the
-		 * /proc filesystem
+		 * /proc filesystem (Linux only)
 		 */
+#ifdef __linux__
 		if (proc_accessible)
 		{
 			long		rss_pages = pgds_get_rss_memory_pages(beentry->st_procpid);
@@ -1245,8 +1258,11 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 		{
 			nulls[i++] = true;
 			nulls[i++] = true;
-
 		}
+#else
+		nulls[i++] = true;
+		nulls[i++] = true;
+#endif
 
 #if PG_VERSION_NUM >= 180000
 		if (beentry->st_plan_id == 0)
