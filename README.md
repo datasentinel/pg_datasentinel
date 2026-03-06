@@ -87,7 +87,7 @@ CREATE EXTENSION pg_datasentinel;
 
 ### `ds_stat_activity`
 
-Extends `pg_stat_activity` with three additional columns populated from `/proc/<pid>/statm` and `/proc/<pid>/fd/`.
+Extends `pg_stat_activity` with three additional columns: `memory_bytes` and `temp_bytes` populated from `/proc/<pid>/statm` and `/proc/<pid>/fd/`, and `plan_id` obtained from PostgreSQL backend status (PostgreSQL 18+ only).
 
 | Column | Type | Description |
 |---|---|---|
