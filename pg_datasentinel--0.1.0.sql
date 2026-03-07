@@ -231,6 +231,33 @@ EXCEPTION WHEN duplicate_object THEN
 END
 $$;
 
+REVOKE EXECUTE ON FUNCTION
+    ds_stat_pids(),
+    ds_autovacuum_msgs(),
+    ds_autovacuum_activity_reset(),
+    ds_autoanalyze_msgs(),
+    ds_autoanalyze_activity_reset(),
+    ds_tempfile_msgs(),
+    ds_tempfile_activity_reset(),
+    ds_container_resource_info(),
+    ds_checkpoint_msgs(),
+    ds_checkpoint_activity_reset(),
+    ds_activity_reset_all(),
+    ds_xid_snapshot_msgs(),
+    ds_wraparound_risk_info()
+FROM PUBLIC;
+
+GRANT EXECUTE ON FUNCTION
+    ds_stat_pids(),
+    ds_autovacuum_msgs(),
+    ds_autoanalyze_msgs(),
+    ds_tempfile_msgs(),
+    ds_container_resource_info(),
+    ds_checkpoint_msgs(),
+    ds_xid_snapshot_msgs(),
+    ds_wraparound_risk_info()
+TO ds_reader;
+
 GRANT SELECT ON
     ds_stat_activity,
     ds_autovacuum_activity,

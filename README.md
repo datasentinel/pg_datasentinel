@@ -269,8 +269,16 @@ FROM ds_wraparound_risk;
 
 The raw hourly snapshots are available in `ds_xid_snapshots` for trending or external alerting:
 
+| Column | Type | Description |
+|---|---|---|
+| `seq` | `int4` | Ordinal position in the buffer (1 = oldest). |
+| `logged_at` | `timestamptz` | Wall-clock time the snapshot was taken. |
+| `next_xid` | `int8` | Next full transaction ID (epoch-aware) at the time of the snapshot. |
+| `next_mxid` | `int8` | Next multixact ID at the time of the snapshot. |
+| `oldest_xid_db` | `oid` | OID of the database holding the oldest frozen XID. |
+
 ```sql
-SELECT seq, logged_at, next_xid, next_mxid
+SELECT seq, logged_at, next_xid, next_mxid, oldest_xid_db
 FROM ds_xid_snapshots
 ORDER BY seq;
 ```
@@ -335,6 +343,18 @@ SET pg_datasentinel.enabled = off;
 SELECT ds_activity_reset_all();
 SET pg_datasentinel.enabled = on;
 ```
+
+---
+
+## Access Control
+
+The extension creates a `ds_reader` role at install time (if it does not already exist) and grants `SELECT` on all views to it:
+
+```sql
+GRANT ds_reader TO monitoring_user;
+```
+
+This lets non-superuser accounts query all observability views without requiring additional `GRANT` statements.
 
 ---
 
