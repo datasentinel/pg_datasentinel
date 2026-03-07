@@ -38,49 +38,35 @@ void		_PG_fini(void);
 #ifdef __linux__
 #define PROC_VIRTUAL_FS    "/proc"
 #endif
+
 #define DS_STAT_IDS_COLS		4
-#define DS_AUTOVACUUM_COLS		17	/* seq, logged_at, datname, schemaname, relname, relid,
-								 * heap_pages, pages_removed, pages_remain, pages_scanned,
-								 * tuples_removed, tuples_remain, user_cpu, sys_cpu, elapsed,
-								 * aggressive, message */
-#define DS_ANALYZE_COLS			13	/* seq, logged_at, datname, schemaname, relname, relid,
-								 * sample_blks_total, ext_stats_total, child_tables_total,
-								 * user_cpu, sys_cpu, elapsed, message */
-#define PGDS_AUTOVACUUM_MSG_LEN	3072	/* max length of a stored autovacuum log message */
-#define PGDS_AUTOANALYZE_MSG_LEN	1024	/* max length of a stored autoanalyze log message */
-#define DS_TEMPFILE_COLS		7		/* seq, logged_at, datname, username, pid, bytes, message */
-#define PGDS_TEMPFILE_MSG_LEN	512		/* max length of a stored temp file log message */
-#define DS_CHECKPOINT_COLS		16		/* seq, logged_at, is_restartpoint,
-										 * start_t, end_t, bufs_written,
-										 * segs_added, segs_removed, segs_recycled,
-										 * write_time, sync_time, total_time,
-										 * sync_rels, longest_sync, average_sync,
-										 * message */
-#define PGDS_CHECKPOINT_MSG_LEN	512		/* max length of a stored checkpoint log message */
-#define DS_XID_SNAPSHOT_COLS	5		/* seq, logged_at, next_xid, next_mxid, oldest_xid_db */
-#define DS_WRAPAROUND_RISK_COLS	17		/* snapshot_count,
-										 * oldest_snapshot_at, newest_snapshot_at,
-										 * current_xid, xids_to_aggressive_vacuum,
-										 * xids_to_wraparound, txid_rate_per_sec,
-										 * oldest_xid_database,
-										 * eta_aggressive_vacuum, eta_wraparound,
-										 * current_mxid, mxids_to_aggressive_vacuum,
-										 * mxids_to_wraparound, mxid_rate_per_sec,
-										 * oldest_mxid_database,
-										 * eta_aggressive_vacuum_mxid,
-										 * eta_wraparound_mxid */
+#define DS_AUTOVACUUM_COLS		17
+#define DS_ANALYZE_COLS			13
+#define DS_TEMPFILE_COLS		7
+#define DS_CHECKPOINT_COLS		16
+#define DS_XID_SNAPSHOT_COLS	5
+#define DS_WRAPAROUND_RISK_COLS	17
+#define DS_CGROUP_COLS	3
+
+
+/* Message max length */
+#define PGDS_AUTOVACUUM_MSG_LEN	3072
+#define PGDS_AUTOANALYZE_MSG_LEN	1024
+#define PGDS_TEMPFILE_MSG_LEN	512
+#define PGDS_CHECKPOINT_MSG_LEN	512
 
 /*
- * One slot in the ring buffer.
+ * One slot in the autovacuum ring buffer.
+ * Populated from LOG messages controlled by log_autovacuum_min_duration.
  * Fixed-size fields only — this struct lives in shared memory.
  */
 typedef struct PgdsAutovacuumEntry
 {
 	TimestampTz	logged_at;				/* wall-clock time the message was intercepted */
-	char		datname[NAMEDATALEN];	/* database name */
-	char		schemaname[NAMEDATALEN];	/* schema name */
-	char		relname[NAMEDATALEN];	/* table name */
-	Oid			reloid;					/* OID of the relation */
+	char		datname[NAMEDATALEN];
+	char		schemaname[NAMEDATALEN];
+	char		relname[NAMEDATALEN];
+	Oid			reloid;
 	/* vacuum progress counters (from pg_stat_progress_vacuum param2) */
 	int64		heap_pages;
 	/* vacuum stats parsed from the log message */
@@ -97,20 +83,10 @@ typedef struct PgdsAutovacuumEntry
 	char		message[PGDS_AUTOVACUUM_MSG_LEN];
 } PgdsAutovacuumEntry;
 
-/*
- * Shared-memory header for the FIFO ring buffer.
- *
- * head  – index of the oldest (next-to-be-read) slot.
- * tail  – index of the next write slot.
- * count – number of valid entries currently held (0 … max).
- * max   – capacity, fixed at postmaster start from max_actions.
- *
- * When the buffer is full a new write overwrites the oldest entry and
- * advances head, so the newest max_actions messages are always retained.
- */
+/* Shared-memory FIFO ring buffer; lock protects all fields. */
 typedef struct PgdsAutovacuumSharedState
 {
-	LWLock	   *lock;			/* protects all fields below */
+	LWLock	   *lock;
 	int			head;
 	int			tail;
 	int			count;
@@ -119,16 +95,17 @@ typedef struct PgdsAutovacuumSharedState
 } PgdsAutovacuumSharedState;
 
 /*
- * One slot in the analyze ring buffer.
+ * One slot in the autoanalyze ring buffer.
+ * Populated from LOG messages controlled by log_autovacuum_min_duration.
  * Fixed-size fields only — this struct lives in shared memory.
  */
 typedef struct PgdsAutoanalyzeEntry
 {
 	TimestampTz	logged_at;				/* wall-clock time the message was intercepted */
-	char		datname[NAMEDATALEN];	/* database name */
-	char		schemaname[NAMEDATALEN];	/* schema name */
-	char		relname[NAMEDATALEN];	/* table name */
-	Oid			reloid;					/* OID of the relation */
+	char		datname[NAMEDATALEN];
+	char		schemaname[NAMEDATALEN];
+	char		relname[NAMEDATALEN];
+	Oid			reloid;
 	/* analyze progress counters (from pg_stat_progress_analyze param2..param8) */
 	int64		sample_blks_total;
 	int64		ext_stats_total;
@@ -140,6 +117,7 @@ typedef struct PgdsAutoanalyzeEntry
 	char		message[PGDS_AUTOANALYZE_MSG_LEN];
 } PgdsAutoanalyzeEntry;
 
+/* Shared-memory FIFO ring buffer; lock protects all fields. */
 typedef struct PgdsAutoanalyzeSharedState
 {
 	LWLock	   *lock;
@@ -152,19 +130,20 @@ typedef struct PgdsAutoanalyzeSharedState
 
 /*
  * One slot in the temp-file ring buffer.
- * Captures each LOG message emitted when a temporary file is deleted
- * (controlled by log_temp_files).
+ * Populated from LOG messages controlled by log_temp_files.
+ * Fixed-size fields only — this struct lives in shared memory.
  */
 typedef struct PgdsTempfileEntry
 {
 	TimestampTz	logged_at;				/* wall-clock time the message was intercepted */
-	char		datname[NAMEDATALEN];	/* database name */
-	char		username[NAMEDATALEN];	/* role name */
-	int			pid;					/* backend PID */
+	char		datname[NAMEDATALEN];
+	char		username[NAMEDATALEN];
+	int			pid;
 	int64		bytes;					/* temp file size in bytes */
 	char		message[PGDS_TEMPFILE_MSG_LEN];
 } PgdsTempfileEntry;
 
+/* Shared-memory FIFO ring buffer; lock protects all fields. */
 typedef struct PgdsTempfileSharedState
 {
 	LWLock	   *lock;
@@ -177,28 +156,29 @@ typedef struct PgdsTempfileSharedState
 
 /*
  * One slot in the checkpoint ring buffer.
- * Metrics are read directly from the CheckpointStats global (no text parsing).
+ * Populated from LOG messages controlled by log_checkpoints.
  * Fixed-size fields only — this struct lives in shared memory.
  */
 typedef struct PgdsCheckpointEntry
 {
 	TimestampTz	logged_at;			/* wall-clock time the message was intercepted */
-	bool		is_restartpoint;	/* true = restartpoint, false = regular checkpoint */
-	TimestampTz	start_t;			/* CheckpointStats.ckpt_start_t */
-	TimestampTz	end_t;				/* CheckpointStats.ckpt_end_t */
-	int32		bufs_written;		/* CheckpointStats.ckpt_bufs_written */
-	int32		segs_added;			/* CheckpointStats.ckpt_segs_added */
-	int32		segs_removed;		/* CheckpointStats.ckpt_segs_removed */
-	int32		segs_recycled;		/* CheckpointStats.ckpt_segs_recycled */
-	double		write_time;			/* seconds: ckpt_write_t to ckpt_sync_t */
-	double		sync_time;			/* seconds: ckpt_sync_t to ckpt_sync_end_t */
-	double		total_time;			/* seconds: ckpt_start_t to ckpt_end_t */
-	int32		sync_rels;			/* CheckpointStats.ckpt_sync_rels */
-	double		longest_sync;		/* seconds (converted from microseconds) */
-	double		average_sync;		/* seconds (converted from microseconds) */
+	bool		is_restartpoint;
+	TimestampTz	start_t;
+	TimestampTz	end_t;
+	int32		bufs_written;
+	int32		segs_added;
+	int32		segs_removed;
+	int32		segs_recycled;
+	double		write_time;			/* seconds */
+	double		sync_time;			/* seconds */
+	double		total_time;			/* seconds */
+	int32		sync_rels;
+	double		longest_sync;		/* seconds (from microseconds) */
+	double		average_sync;		/* seconds (from microseconds) */
 	char		message[PGDS_CHECKPOINT_MSG_LEN];
 } PgdsCheckpointEntry;
 
+/* Shared-memory FIFO ring buffer; lock protects all fields. */
 typedef struct PgdsCheckpointSharedState
 {
 	LWLock	   *lock;
@@ -211,9 +191,8 @@ typedef struct PgdsCheckpointSharedState
 
 /*
  * One slot in the XID snapshot ring buffer.
- * Captured at most once per hour, triggered by every checkpoint.
- * Stores the epoch-aware XID and MXID so that the view can compute
- * a transaction-rate and estimate time-to-wraparound.
+ * Captured on every checkpoint, throttled to at most once per hour.
+ * Fixed-size fields only — this struct lives in shared memory.
  */
 typedef struct PgdsXidSnapshotEntry
 {
@@ -223,6 +202,7 @@ typedef struct PgdsXidSnapshotEntry
 	Oid			oldest_xid_db;	/* TransamVariables->oldestXidDB */
 } PgdsXidSnapshotEntry;
 
+/* Shared-memory FIFO ring buffer; lock protects all fields. */
 typedef struct PgdsXidSnapshotSharedState
 {
 	LWLock	   *lock;
@@ -279,7 +259,6 @@ PG_FUNCTION_INFO_V1(ds_xid_snapshot_msgs);
 PG_FUNCTION_INFO_V1(ds_wraparound_risk_info);
 PG_FUNCTION_INFO_V1(ds_container_resource_info);
 
-#define DS_CGROUP_COLS	3	/* cgroup_version, cpu_limit, mem_limit_bytes */
 
 
 /*
@@ -313,7 +292,7 @@ ds_autovacuum_msgs(PG_FUNCTION_ARGS)
 	for (a = 0; a < count; a++)
 	{
 		int			idx = (head + a) % max;
-		int         i = 0;
+		int			i = 0;
 		Datum		values[DS_AUTOVACUUM_COLS];
 		bool		nulls[DS_AUTOVACUUM_COLS];
 
@@ -540,9 +519,6 @@ ds_tempfile_activity_reset(PG_FUNCTION_ARGS)
 }
 
 
-/*
- * ds_checkpoint_msgs: return all checkpoint/restartpoint entries from the ring buffer.
- */
 Datum
 ds_checkpoint_msgs(PG_FUNCTION_ARGS)
 {
@@ -596,9 +572,6 @@ ds_checkpoint_msgs(PG_FUNCTION_ARGS)
 	return (Datum) 0;
 }
 
-/*
- * ds_checkpoint_activity_reset: discard all entries from the checkpoint ring buffer.
- */
 Datum
 ds_checkpoint_activity_reset(PG_FUNCTION_ARGS)
 {
@@ -718,55 +691,7 @@ ds_xid_snapshot_msgs(PG_FUNCTION_ARGS)
 	return (Datum) 0;
 }
 
-/*
- * Build a palloc'd Interval from a duration expressed in seconds.
- * Negative values are clamped to zero (should not happen in practice).
- */
-static Interval *
-secs_to_interval(double secs)
-{
-	Interval   *iv = (Interval *) palloc(sizeof(Interval));
 
-	if (secs < 0)
-		secs = 0;
-	iv->month = 0;
-	iv->day   = (int32) (secs / 86400.0);
-	iv->time  = (int64) ((secs - iv->day * 86400.0) * USECS_PER_SEC);
-	return iv;
-}
-
-/*
- * get_oldest_mxid_database: scan pg_database to find the OID of the
- * database with the minimum datminmxid.  Requires catalog access, so must
- * only be called from a regular backend.
- */
-static Oid
-get_oldest_mxid_database(void)
-{
-	Relation		rel;
-	TableScanDesc	scan;
-	HeapTuple		tup;
-	MultiXactId		oldest_mxid = MaxMultiXactId;
-	Oid				result = InvalidOid;
-	bool			first = true;
-
-	rel = table_open(DatabaseRelationId, AccessShareLock);
-	scan = table_beginscan_catalog(rel, 0, NULL);
-	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
-	{
-		Form_pg_database dbform = (Form_pg_database) GETSTRUCT(tup);
-
-		if (first || MultiXactIdPrecedes(dbform->datminmxid, oldest_mxid))
-		{
-			oldest_mxid = dbform->datminmxid;
-			result = dbform->oid;
-			first = false;
-		}
-	}
-	table_endscan(scan);
-	table_close(rel, AccessShareLock);
-	return result;
-}
 
 /*
  * ds_wraparound_risk_info: always returns exactly one composite row.
@@ -915,7 +840,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 			if (xids_to_vac > 0 && txid_rate > 0)
 			{
 				values[8] = IntervalPGetDatum(
-					secs_to_interval((double) xids_to_vac / txid_rate));
+					pgds_secs_to_interval((double) xids_to_vac / txid_rate));
 				nulls[8] = false;
 			}
 
@@ -923,7 +848,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 			if (xids_to_wrap > 0 && txid_rate > 0)
 			{
 				values[9] = IntervalPGetDatum(
-					secs_to_interval((double) xids_to_wrap / txid_rate));
+					pgds_secs_to_interval((double) xids_to_wrap / txid_rate));
 				nulls[9] = false;
 			}
 		}
@@ -985,7 +910,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 			if (mxids_to_vac > 0 && mxid_rate > 0)
 			{
 				values[15] = IntervalPGetDatum(
-					secs_to_interval((double) mxids_to_vac / mxid_rate));
+					pgds_secs_to_interval((double) mxids_to_vac / mxid_rate));
 				nulls[15] = false;
 			}
 
@@ -993,7 +918,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 			if (mxids_to_wrap > 0 && mxid_rate > 0)
 			{
 				values[16] = IntervalPGetDatum(
-					secs_to_interval((double) mxids_to_wrap / mxid_rate));
+					pgds_secs_to_interval((double) mxids_to_wrap / mxid_rate));
 				nulls[16] = false;
 			}
 		}
@@ -1001,7 +926,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 
 	/* [14] oldest_mxid_database — catalog scan for min datminmxid */
 	{
-		Oid mxid_db = get_oldest_mxid_database();
+		Oid mxid_db = pgds_get_oldest_mxid_database();
 		if (OidIsValid(mxid_db))
 		{
 			char *dbname = get_database_name(mxid_db);
@@ -1472,13 +1397,6 @@ pgds_log_tempfile(ErrorData *edata)
 	LWLockRelease(pgds_tempfile->lock);
 }
 
-/*
- * pgds_log_checkpoint: capture a checkpoint or restartpoint complete message.
- * All metrics are read directly from CheckpointStats (PGDLLIMPORT) — no text
- * parsing required.  This function is called from within the emit_log_hook,
- * synchronously on the same call stack as LogCheckpointEnd(), so
- * CheckpointStats is fully populated at this point.
- */
 static void
 pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint)
 {
@@ -1507,7 +1425,6 @@ pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint)
 							CheckpointStats.ckpt_start_t,
 							CheckpointStats.ckpt_end_t) / 1000.0;
 	e->sync_rels       = CheckpointStats.ckpt_sync_rels;
-	/* ckpt_longest_sync and ckpt_agg_sync_time are in microseconds */
 	e->longest_sync    = (double) ((CheckpointStats.ckpt_longest_sync + 999) / 1000) / 1000.0;
 	avg_sync_time      = (CheckpointStats.ckpt_sync_rels > 0)
 		? CheckpointStats.ckpt_agg_sync_time / CheckpointStats.ckpt_sync_rels
@@ -1598,7 +1515,6 @@ pgds_emit_log(ErrorData *edata)
 	if (edata->message == NULL)
 		return;
 
-	/* Route checkpoint / restartpoint complete messages via message_id */
 	if (edata->message_id != NULL)
 	{
 		if (strncmp(edata->message_id, "checkpoint complete:", 19) == 0)
@@ -1613,7 +1529,6 @@ pgds_emit_log(ErrorData *edata)
 				pgds_log_checkpoint(edata, true);
 			return;
 		}
-		/* Route temporary-file messages via message_id */
 		if (strcmp(edata->message_id, "temporary file: path \"%s\", size %lu") == 0)
 		{
 			if (pgds_tempfile != NULL)
