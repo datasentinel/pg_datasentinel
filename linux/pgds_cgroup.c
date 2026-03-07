@@ -37,6 +37,39 @@ read_cgroup_ll(const char *path, long long *val)
 }
 
 /*
+ * Parse the "some avg60=X.XX" value from a PSI cpu.pressure file.
+ * Returns true and sets *avg60 on success, false otherwise.
+ */
+static bool
+read_cpu_pressure_avg60(const char *cpath, double *avg60)
+{
+	char	fpath[MAXPGPATH];
+	FILE   *fp;
+	char	line[256];
+
+	snprintf(fpath, sizeof(fpath), "%s/cpu.pressure", cpath);
+	fp = fopen(fpath, "r");
+	if (!fp)
+		return false;
+
+	while (fgets(line, sizeof(line), fp))
+	{
+		if (strncmp(line, "some ", 5) == 0)
+		{
+			char *p = strstr(line, "avg60=");
+
+			if (p && sscanf(p, "avg60=%lf", avg60) == 1)
+			{
+				fclose(fp);
+				return true;
+			}
+		}
+	}
+	fclose(fp);
+	return false;
+}
+
+/*
  * Find the cgroup path for the current process from /proc/self/cgroup.
  *
  * For cgroup v2 pass controller = NULL: we look for the line "0::…".
@@ -62,19 +95,29 @@ find_cgroup_path(int version, const char *controller,
 		char   *hier_id;
 		char   *controllers;
 		char   *cgroup_path;
-		char   *sp = NULL;
-		char	copy[1024];
+		char   *colon1;
+		char   *colon2;
 
 		/* strip trailing newline */
 		line[strcspn(line, "\n")] = '\0';
 
-		strlcpy(copy, line, sizeof(copy));
-		hier_id     = strtok_r(copy, ":", &sp);
-		if (!hier_id) continue;
-		controllers = strtok_r(NULL, ":", &sp);
-		if (!controllers) continue;
-		cgroup_path = strtok_r(NULL, "", &sp);
-		if (!cgroup_path) continue;
+		/*
+		 * Format: "hier_id:controllers:cgroup_path"
+		 * For cgroup v2 unified hierarchy: "0::/path" — controllers is empty.
+		 * Use strchr to avoid strtok_r skipping empty fields.
+		 */
+		colon1 = strchr(line, ':');
+		if (!colon1) continue;
+		*colon1 = '\0';
+		hier_id = line;
+
+		colon2 = strchr(colon1 + 1, ':');
+		if (!colon2) continue;
+		*colon2 = '\0';
+		controllers = colon1 + 1;
+		cgroup_path = colon2 + 1;
+
+		if (*cgroup_path == '\0') continue;
 
 		if (version == 2)
 		{
@@ -180,6 +223,29 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 				fclose(fp);
 			}
 		}
+
+		/* CPU pressure: cpu.pressure → some avg60 */
+		{
+			double avg60;
+
+			if (read_cpu_pressure_avg60(cpath, &avg60))
+			{
+				info->cpu_pressure_set = true;
+				info->cpu_pressure_avg60 = avg60;
+			}
+		}
+
+		/* Memory used: memory.current */
+		{
+			long long used;
+
+			snprintf(fpath, sizeof(fpath), "%s/memory.current", cpath);
+			if (read_cgroup_ll(fpath, &used))
+			{
+				info->mem_used_set = true;
+				info->mem_used_bytes = (int64) used;
+			}
+		}
 	}
 	else	/* version == 1 */
 	{
@@ -205,15 +271,21 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 		/* ---- Memory ---- */
 		if (find_cgroup_path(1, "memory", "/sys/fs/cgroup/memory", cpath, sizeof(cpath)))
 		{
-			long long limit;
+			long long val;
 
 			snprintf(fpath, sizeof(fpath), "%s/memory.limit_in_bytes", cpath);
-			if (read_cgroup_ll(fpath, &limit) && limit < CGROUP_V1_MEM_UNLIMITED)
+			if (read_cgroup_ll(fpath, &val) && val < CGROUP_V1_MEM_UNLIMITED)
 			{
 				info->mem_limit_set = true;
-				info->mem_limit_bytes = (int64) limit;
+				info->mem_limit_bytes = (int64) val;
 			}
 
+			snprintf(fpath, sizeof(fpath), "%s/memory.usage_in_bytes", cpath);
+			if (read_cgroup_ll(fpath, &val))
+			{
+				info->mem_used_set = true;
+				info->mem_used_bytes = (int64) val;
+			}
 		}
 	}
 

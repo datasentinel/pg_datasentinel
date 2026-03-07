@@ -46,7 +46,7 @@ void		_PG_fini(void);
 #define DS_CHECKPOINT_COLS		16
 #define DS_XID_SNAPSHOT_COLS	5
 #define DS_WRAPAROUND_RISK_COLS	17
-#define DS_CGROUP_COLS	3
+#define DS_CGROUP_COLS	5
 
 
 /* Message max length */
@@ -992,6 +992,22 @@ ds_container_resource_info(PG_FUNCTION_ARGS)
 			if (cg.mem_limit_set)
 			{
 				values[i] = Int64GetDatum(cg.mem_limit_bytes);
+				nulls[i]  = false;
+			}
+			i++;
+
+			/* cpu_pressure_pct_60s */
+			if (cg.cpu_pressure_set)
+			{
+				values[i] = Float8GetDatum(cg.cpu_pressure_avg60);
+				nulls[i]  = false;
+			}
+			i++;
+
+			/* mem_used */
+			if (cg.mem_used_set)
+			{
+				values[i] = Int64GetDatum(cg.mem_used_bytes);
 				nulls[i]  = false;
 			}
 		}

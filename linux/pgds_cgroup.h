@@ -23,6 +23,12 @@ typedef struct PgdsCgroupInfo
 	bool	mem_limit_set;
 	int64	mem_limit_bytes;	/* hard memory limit */
 
+	bool	cpu_pressure_set;
+	double	cpu_pressure_avg60;	/* PSI some avg60, percent (0–100); v2 only */
+
+	bool	mem_used_set;
+	int64	mem_used_bytes;		/* current memory usage */
+
 } PgdsCgroupInfo;
 
 extern bool pgds_read_cgroup_info(PgdsCgroupInfo *info);

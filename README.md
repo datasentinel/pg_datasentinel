@@ -14,7 +14,7 @@ It must be loaded via `shared_preload_libraries` and works on Linux.
 - **Temporary file history** — captures every `log_temp_files` LOG message with file size and role information.
 - **Checkpoint history** — captures every checkpoint and restartpoint completion with detailed I/O and sync timings.
 - **Wraparound risk estimation** — samples XID and MXID at each checkpoint (at most once per hour) and provides a single-row view with live distances to the aggressive-vacuum and wraparound limits for both XID and MXID, plus rate-based ETAs that reflect whichever counter is closer to danger.
-- **Container resource limits** — reports cgroup v1/v2 CPU quota and memory hard limit for the PostgreSQL process.
+- **Container resource limits** — reports cgroup v1/v2 CPU quota, memory hard limit, current memory usage, and CPU pressure (PSI avg60, cgroup v2 only) for the PostgreSQL process.
 
 ---
 
@@ -287,16 +287,23 @@ ORDER BY seq;
 
 ### `ds_container_resources`
 
-A single-row view that reports the cgroup resource limits applied to the PostgreSQL process. All columns are `NULL` when no cgroup limit is configured or when the system does not use cgroups. Supports both cgroup v1 and cgroup v2.
+A single-row view that reports cgroup resource limits and current usage for the PostgreSQL process. Individual columns are `NULL` when the corresponding limit is not set, the cgroup file is absent, or the system does not use cgroups. Supports both cgroup v1 and cgroup v2.
 
 | Column | Type | Description |
 |---|---|---|
 | `cgroup_version` | `int4` | Cgroup version in use (`1` or `2`). `NULL` if not under cgroups. |
 | `cpu_limit` | `float8` | Hard CPU quota in fractional CPUs (e.g., `2.0` = 2 vCPUs). `NULL` if unlimited. |
+| `cpu_pressure_pct_60s` | `float8` | CPU pressure (PSI `some avg60`, 0–100%). `NULL` if `cpu.pressure` is not available (cgroup v1 or kernel without PSI). |
 | `mem_limit_bytes` | `int8` | Hard memory limit in bytes. `NULL` if unlimited. |
+| `mem_used_bytes` | `int8` | Current memory usage in bytes (`memory.current` on cgroup v2, `memory.usage_in_bytes` on cgroup v1). |
 
 ```sql
-SELECT cgroup_version, cpu_limit, pg_size_pretty(mem_limit_bytes) AS memory_limit
+SELECT
+    cgroup_version,
+    cpu_limit,
+    cpu_pressure_pct_60s,
+    pg_size_pretty(mem_limit_bytes) AS memory_limit,
+    pg_size_pretty(mem_used_bytes)  AS memory_used
 FROM ds_container_resources;
 ```
 
