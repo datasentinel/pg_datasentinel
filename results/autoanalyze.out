@@ -1,16 +1,16 @@
 -- Verify the view is queryable and returns the expected columns.
 SELECT
-    count(seq IS NOT NULL) AS has_seq,
-    count(logged_at     IS NOT NULL) AS has_logged_at,
-    count(datname       IS NOT NULL) AS has_datname,
-    count(schemaname    IS NOT NULL) AS has_schemaname,
-    count(relname       IS NOT NULL) AS has_relname,
-    count(relid         IS NOT NULL) AS has_relid,
-    count(message       IS NOT NULL) AS has_message
+    bool_and(seq        IS NOT NULL) AS has_seq,
+    bool_and(logged_at  IS NOT NULL) AS has_logged_at,
+    bool_and(datname    IS NOT NULL) AS has_datname,
+    bool_and(schemaname IS NOT NULL) AS has_schemaname,
+    bool_and(relname    IS NOT NULL) AS has_relname,
+    bool_and(relid      IS NOT NULL) AS has_relid,
+    bool_and(message    IS NOT NULL) AS has_message
 FROM ds_autoanalyze_activity where message ~* 'test_av';
  has_seq | has_logged_at | has_datname | has_schemaname | has_relname | has_relid | has_message 
 ---------+---------------+-------------+----------------+-------------+-----------+-------------
-       1 |             1 |           1 |              1 |           1 |         1 |           1
+ t       | t             | t           | t              | t           | t         | t
 (1 row)
 
 select ds_autoanalyze_activity_reset();

@@ -205,18 +205,40 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
 CREATE VIEW ds_wraparound_risk AS
-    SELECT snapshot_count,
-        newest_snapshot_at - oldest_snapshot_at AS snapshot_span,
-        txid_rate_per_sec,
-        current_xid,
-        xids_to_aggressive_vacuum,
-        xids_to_wraparound,
-        mxid_rate_per_sec,
-        current_mxid,
-        mxids_to_aggressive_vacuum,
-        mxids_to_wraparound,
+    SELECT 
+        LEAST(eta_aggressive_vacuum, COALESCE(eta_aggressive_vacuum_mxid, eta_aggressive_vacuum)) AS eta_aggressive_vacuum,
+        LEAST(eta_wraparound, COALESCE(eta_wraparound_mxid, eta_wraparound)) AS eta_wraparound,
         oldest_xid_database,
         oldest_mxid_database,
-        LEAST(eta_aggressive_vacuum, COALESCE(eta_aggressive_vacuum_mxid, eta_aggressive_vacuum)) AS eta_aggressive_vacuum,
-        LEAST(eta_wraparound, COALESCE(eta_wraparound_mxid, eta_wraparound)) AS eta_wraparound
+        txid_rate_per_sec,
+        mxid_rate_per_sec,
+        snapshot_count,
+        oldest_snapshot_at,
+        newest_snapshot_at,
+        CASE WHEN snapshot_count > 1 THEN newest_snapshot_at - oldest_snapshot_at END AS snapshot_span,
+        xids_to_aggressive_vacuum,
+        xids_to_wraparound,
+        mxids_to_aggressive_vacuum,
+        mxids_to_wraparound
     FROM ds_wraparound_risk_info();
+
+
+DO $$
+BEGIN
+    CREATE ROLE ds_reader;
+EXCEPTION WHEN duplicate_object THEN
+    NULL;
+END
+$$;
+
+GRANT SELECT ON
+    ds_stat_activity,
+    ds_autovacuum_activity,
+    ds_autoanalyze_activity,
+    ds_tempfile_activity,
+    ds_container_resources,
+    ds_checkpoint_activity,
+    ds_activity_summary,
+    ds_xid_snapshots,
+    ds_wraparound_risk
+TO ds_reader;

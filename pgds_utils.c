@@ -1,9 +1,64 @@
 #include "postgres.h"
 #include "catalog/pg_type.h"
+#include "catalog/pg_database.h"
+#include "access/heapam.h"
+#include "access/multixact.h"
+#include "utils/rel.h"
+#include "utils/timestamp.h"
 #include <regex.h>
 #include <stdlib.h>
 
 #include "pgds_utils.h"
+
+/*
+ * Scan pg_database to find the OID of the database with the minimum
+ * datminmxid.  Requires catalog access, so must only be called from a
+ * regular backend.
+ */
+Oid
+pgds_get_oldest_mxid_database(void)
+{
+	Relation		rel;
+	TableScanDesc	scan;
+	HeapTuple		tup;
+	MultiXactId		oldest_mxid = MaxMultiXactId;
+	Oid				result = InvalidOid;
+	bool			first = true;
+
+	rel = table_open(DatabaseRelationId, AccessShareLock);
+	scan = table_beginscan_catalog(rel, 0, NULL);
+	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	{
+		Form_pg_database dbform = (Form_pg_database) GETSTRUCT(tup);
+
+		if (first || MultiXactIdPrecedes(dbform->datminmxid, oldest_mxid))
+		{
+			oldest_mxid = dbform->datminmxid;
+			result = dbform->oid;
+			first = false;
+		}
+	}
+	table_endscan(scan);
+	table_close(rel, AccessShareLock);
+	return result;
+}
+
+/*
+ * Build a palloc'd Interval from a duration expressed in seconds.
+ * Negative values are clamped to zero (should not happen in practice).
+ */
+Interval *
+pgds_secs_to_interval(double secs)
+{
+	Interval   *iv = (Interval *) palloc(sizeof(Interval));
+
+	if (secs < 0)
+		secs = 0;
+	iv->month = 0;
+	iv->day   = (int32) (secs / 86400.0);
+	iv->time  = (int64) ((secs - iv->day * 86400.0) * USECS_PER_SEC);
+	return iv;
+}
 
 /*
  * Parse schemaname and relname from alog message.
