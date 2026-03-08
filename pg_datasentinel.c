@@ -1228,63 +1228,48 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 static void
 pgds_log_autovacuum(ErrorData *edata)
 {
+	const char *dbname = get_database_name(MyDatabaseId);
+	char		schemaname[NAMEDATALEN];
+	char		relname[NAMEDATALEN];
+	Oid			nsoid;
+	Oid			reloid;
+	PgdsAutovacuumEntry *e;
+
+	pgds_parse_table_from_message(edata->message, schemaname, relname);
+	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
+	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
+
 	/*
 	 * Write the message into the next slot of the ring buffer.
 	 * When the buffer is full the oldest entry is silently overwritten.
 	 */
 	LWLockAcquire(pgds_autovacuum->lock, LW_EXCLUSIVE);
 
-	pgds_autovacuum->entries[pgds_autovacuum->tail].logged_at = GetCurrentTimestamp();
+	e = &pgds_autovacuum->entries[pgds_autovacuum->tail];
 
+	e->logged_at = GetCurrentTimestamp();
 
-	/* database: resolve the name from the OID (valid in any connected backend) */
-	{
-		const char *dbname = get_database_name(MyDatabaseId);
+	strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
+	strlcpy(e->schemaname, schemaname, NAMEDATALEN);
+	strlcpy(e->relname, relname, NAMEDATALEN);
 
-		strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].datname,
-				dbname ? dbname : "",
-				NAMEDATALEN);
-	}
+	e->reloid = reloid;
 
-	/* schema and table are parsed from the message text */
-	pgds_parse_table_from_message(edata->message,
-							 pgds_autovacuum->entries[pgds_autovacuum->tail].schemaname,
-							 pgds_autovacuum->entries[pgds_autovacuum->tail].relname);
+	e->heap_pages = (MyBEEntry != NULL) ? MyBEEntry->st_progress_param[1] : 0;
 
-	{
-		Oid			nsoid = get_namespace_oid(
-										pgds_autovacuum->entries[pgds_autovacuum->tail].schemaname,
-										true /* missing_ok */ );
+	pgds_parse_vacuum_stats(edata->message,
+							&e->pages_removed,
+							&e->pages_remain,
+							&e->pages_scanned,
+							&e->tuples_removed,
+							&e->tuples_remain);
+	pgds_parse_cpu_stats(edata->message,
+						 &e->user_cpu,
+						 &e->sys_cpu,
+						 &e->elapsed);
+	e->aggressive = (strstr(edata->message, "automatic aggressive vacuum") != NULL);
 
-		pgds_autovacuum->entries[pgds_autovacuum->tail].reloid =
-			(nsoid != InvalidOid)
-			? get_relname_relid(pgds_autovacuum->entries[pgds_autovacuum->tail].relname, nsoid)
-			: InvalidOid;
-	}
-
-	if (MyBEEntry != NULL)
-		pgds_autovacuum->entries[pgds_autovacuum->tail].heap_pages = MyBEEntry->st_progress_param[1];
-	else
-		pgds_autovacuum->entries[pgds_autovacuum->tail].heap_pages = 0;
-
-	{
-		PgdsAutovacuumEntry *e = &pgds_autovacuum->entries[pgds_autovacuum->tail];
-
-		pgds_parse_vacuum_stats(edata->message,
-								&e->pages_removed,
-								&e->pages_remain,
-								&e->pages_scanned,
-								&e->tuples_removed,
-								&e->tuples_remain);
-		pgds_parse_cpu_stats(edata->message,
-							 &e->user_cpu,
-							 &e->sys_cpu,
-							 &e->elapsed);
-		e->aggressive = (strstr(edata->message, "automatic aggressive vacuum") != NULL);
-	}
-
-	strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].message,
-			edata->message, PGDS_AUTOVACUUM_MSG_LEN);
+	strlcpy(e->message, edata->message, PGDS_AUTOVACUUM_MSG_LEN);
 	pgds_autovacuum->tail = (pgds_autovacuum->tail + 1) % pgds_autovacuum->max;
 	if (pgds_autovacuum->count < pgds_autovacuum->max)
 		pgds_autovacuum->count++;
@@ -1301,60 +1286,51 @@ pgds_log_autovacuum(ErrorData *edata)
 static void
 pgds_log_autoanalyze(ErrorData *edata)
 {
+	const char *dbname = get_database_name(MyDatabaseId);
+	char		schemaname[NAMEDATALEN];
+	char		relname[NAMEDATALEN];
+	Oid			nsoid;
+	Oid			reloid;
+	PgdsAutoanalyzeEntry *e;
+
+	pgds_parse_table_from_message(edata->message, schemaname, relname);
+	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
+	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
+
 	LWLockAcquire(pgds_autoanalyze->lock, LW_EXCLUSIVE);
 
-	pgds_autoanalyze->entries[pgds_autoanalyze->tail].logged_at = GetCurrentTimestamp();
+	e = &pgds_autoanalyze->entries[pgds_autoanalyze->tail];
 
-	{
-		const char *dbname = get_database_name(MyDatabaseId);
+	e->logged_at = GetCurrentTimestamp();
 
-		strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].datname,
-				dbname ? dbname : "",
-				NAMEDATALEN);
-	}
+	strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
+	strlcpy(e->schemaname, schemaname, NAMEDATALEN);
+	strlcpy(e->relname, relname, NAMEDATALEN);
 
-	pgds_parse_table_from_message(edata->message,
-							 pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
-							 pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname);
-
-	{
-		Oid			nsoid = get_namespace_oid(
-										pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
-										true /* missing_ok */ );
-
-		pgds_autoanalyze->entries[pgds_autoanalyze->tail].reloid =
-			(nsoid != InvalidOid)
-			? get_relname_relid(pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname, nsoid)
-			: InvalidOid;
-	}
+	e->reloid = reloid;
 
 	/*
 	 * Capture analyze progress counters from the backend's own status entry.
 	 * pgstat_progress_end_command() leaves st_progress_param intact.
 	 */
+	if (MyBEEntry != NULL)
 	{
-		PgdsAutoanalyzeEntry *e = &pgds_autoanalyze->entries[pgds_autoanalyze->tail];
-
-		if (MyBEEntry != NULL)
-		{
-			e->sample_blks_total          = MyBEEntry->st_progress_param[1];
-			e->ext_stats_total            = MyBEEntry->st_progress_param[3];
-			e->child_tables_total         = MyBEEntry->st_progress_param[5];
-		}
-		else
-		{
-			e->sample_blks_total          = 0;
-			e->ext_stats_total            = 0;
-			e->child_tables_total         = 0;
-		}
-		pgds_parse_cpu_stats(edata->message,
-							 &e->user_cpu,
-							 &e->sys_cpu,
-							 &e->elapsed);
+		e->sample_blks_total  = MyBEEntry->st_progress_param[1];
+		e->ext_stats_total    = MyBEEntry->st_progress_param[3];
+		e->child_tables_total = MyBEEntry->st_progress_param[5];
 	}
+	else
+	{
+		e->sample_blks_total  = 0;
+		e->ext_stats_total    = 0;
+		e->child_tables_total = 0;
+	}
+	pgds_parse_cpu_stats(edata->message,
+						 &e->user_cpu,
+						 &e->sys_cpu,
+						 &e->elapsed);
 
-	strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].message,
-			edata->message, PGDS_AUTOANALYZE_MSG_LEN);
+	strlcpy(e->message, edata->message, PGDS_AUTOANALYZE_MSG_LEN);
 	pgds_autoanalyze->tail = (pgds_autoanalyze->tail + 1) % pgds_autoanalyze->max;
 	if (pgds_autoanalyze->count < pgds_autoanalyze->max)
 		pgds_autoanalyze->count++;
@@ -1369,8 +1345,6 @@ pgds_log_autoanalyze(ErrorData *edata)
  * Write one temporary-file log message into the temp-file ring buffer.
  *
  * Only called when edata->message_id matches the known temp-file format string,
- * so we can safely extract the size as the last whitespace-delimited token of
- * edata->message regardless of the server locale.
  */
 static void
 pgds_log_tempfile(ErrorData *edata)
@@ -1398,7 +1372,7 @@ pgds_log_tempfile(ErrorData *edata)
 
 	e->pid = MyProcPid;
 
-	/* size is the last token in the (translated) message */
+	/* size is the last token in the untranslated message */
 	p = strrchr(edata->message_id, ' ');
 	e->bytes = (p != NULL) ? (int64) strtoll(p + 1, NULL, 10) : 0;
 
