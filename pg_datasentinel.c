@@ -1228,6 +1228,13 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 static void
 pgds_log_autovacuum(ErrorData *edata)
 {
+	const char *dbname = get_database_name(MyDatabaseId);
+	Oid			nsoid = get_namespace_oid(
+									pgds_autovacuum->entries[pgds_autovacuum->tail].schemaname,
+									true /* missing_ok */ );
+	Oid 		reloid = (nsoid != InvalidOid)
+				? get_relname_relid(pgds_autovacuum->entries[pgds_autovacuum->tail].relname, nsoid)
+				: InvalidOid;
 	/*
 	 * Write the message into the next slot of the ring buffer.
 	 * When the buffer is full the oldest entry is silently overwritten.
@@ -1236,31 +1243,17 @@ pgds_log_autovacuum(ErrorData *edata)
 
 	pgds_autovacuum->entries[pgds_autovacuum->tail].logged_at = GetCurrentTimestamp();
 
+	strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].datname,
+			dbname ? dbname : "",
+			NAMEDATALEN);
 
-	/* database: resolve the name from the OID (valid in any connected backend) */
-	{
-		const char *dbname = get_database_name(MyDatabaseId);
-
-		strlcpy(pgds_autovacuum->entries[pgds_autovacuum->tail].datname,
-				dbname ? dbname : "",
-				NAMEDATALEN);
-	}
 
 	/* schema and table are parsed from the message text */
 	pgds_parse_table_from_message(edata->message,
 							 pgds_autovacuum->entries[pgds_autovacuum->tail].schemaname,
 							 pgds_autovacuum->entries[pgds_autovacuum->tail].relname);
 
-	{
-		Oid			nsoid = get_namespace_oid(
-										pgds_autovacuum->entries[pgds_autovacuum->tail].schemaname,
-										true /* missing_ok */ );
-
-		pgds_autovacuum->entries[pgds_autovacuum->tail].reloid =
-			(nsoid != InvalidOid)
-			? get_relname_relid(pgds_autovacuum->entries[pgds_autovacuum->tail].relname, nsoid)
-			: InvalidOid;
-	}
+	pgds_autovacuum->entries[pgds_autovacuum->tail].reloid = reloid;
 
 	if (MyBEEntry != NULL)
 		pgds_autovacuum->entries[pgds_autovacuum->tail].heap_pages = MyBEEntry->st_progress_param[1];
@@ -1301,32 +1294,29 @@ pgds_log_autovacuum(ErrorData *edata)
 static void
 pgds_log_autoanalyze(ErrorData *edata)
 {
+	const char *dbname = get_database_name(MyDatabaseId);
+	Oid			nsoid = get_namespace_oid(
+								pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
+								true /* missing_ok */ );
+	Oid  		reloid = (nsoid != InvalidOid)
+				? get_relname_relid(pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname, nsoid)
+				: InvalidOid;
+
 	LWLockAcquire(pgds_autoanalyze->lock, LW_EXCLUSIVE);
 
 	pgds_autoanalyze->entries[pgds_autoanalyze->tail].logged_at = GetCurrentTimestamp();
 
-	{
-		const char *dbname = get_database_name(MyDatabaseId);
 
-		strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].datname,
+	strlcpy(pgds_autoanalyze->entries[pgds_autoanalyze->tail].datname,
 				dbname ? dbname : "",
 				NAMEDATALEN);
-	}
 
 	pgds_parse_table_from_message(edata->message,
 							 pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
 							 pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname);
 
-	{
-		Oid			nsoid = get_namespace_oid(
-										pgds_autoanalyze->entries[pgds_autoanalyze->tail].schemaname,
-										true /* missing_ok */ );
 
-		pgds_autoanalyze->entries[pgds_autoanalyze->tail].reloid =
-			(nsoid != InvalidOid)
-			? get_relname_relid(pgds_autoanalyze->entries[pgds_autoanalyze->tail].relname, nsoid)
-			: InvalidOid;
-	}
+	pgds_autoanalyze->entries[pgds_autoanalyze->tail].reloid = reloid;
 
 	/*
 	 * Capture analyze progress counters from the backend's own status entry.
@@ -1369,8 +1359,6 @@ pgds_log_autoanalyze(ErrorData *edata)
  * Write one temporary-file log message into the temp-file ring buffer.
  *
  * Only called when edata->message_id matches the known temp-file format string,
- * so we can safely extract the size as the last whitespace-delimited token of
- * edata->message regardless of the server locale.
  */
 static void
 pgds_log_tempfile(ErrorData *edata)
@@ -1398,7 +1386,7 @@ pgds_log_tempfile(ErrorData *edata)
 
 	e->pid = MyProcPid;
 
-	/* size is the last token in the (translated) message */
+	/* size is the last token in the untranslated message */
 	p = strrchr(edata->message_id, ' ');
 	e->bytes = (p != NULL) ? (int64) strtoll(p + 1, NULL, 10) : 0;
 

@@ -2,6 +2,7 @@
 #define PGDS_UTILS_H
 
 #include "postgres.h"
+#include "utils/timestamp.h"
 
 extern Oid       pgds_get_oldest_mxid_database(void);
 extern Interval *pgds_secs_to_interval(double secs);

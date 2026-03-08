@@ -18,28 +18,44 @@
 Oid
 pgds_get_oldest_mxid_database(void)
 {
-	Relation		rel;
-	TableScanDesc	scan;
+	Relation		rel = NULL;
+	TableScanDesc	scan = NULL;
 	HeapTuple		tup;
 	MultiXactId		oldest_mxid = MaxMultiXactId;
 	Oid				result = InvalidOid;
 	bool			first = true;
 
-	rel = table_open(DatabaseRelationId, AccessShareLock);
-	scan = table_beginscan_catalog(rel, 0, NULL);
-	while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
+	PG_TRY();
 	{
-		Form_pg_database dbform = (Form_pg_database) GETSTRUCT(tup);
-
-		if (first || MultiXactIdPrecedes(dbform->datminmxid, oldest_mxid))
+		rel = table_open(DatabaseRelationId, AccessShareLock);
+		scan = table_beginscan_catalog(rel, 0, NULL);
+		while ((tup = heap_getnext(scan, ForwardScanDirection)) != NULL)
 		{
-			oldest_mxid = dbform->datminmxid;
-			result = dbform->oid;
-			first = false;
+			Form_pg_database dbform = (Form_pg_database) GETSTRUCT(tup);
+
+			if (first || MultiXactIdPrecedes(dbform->datminmxid, oldest_mxid))
+			{
+				oldest_mxid = dbform->datminmxid;
+				result = dbform->oid;
+				first = false;
+			}
 		}
+		table_endscan(scan);
+		table_close(rel, AccessShareLock);
 	}
-	table_endscan(scan);
-	table_close(rel, AccessShareLock);
+	PG_CATCH();
+	{
+		ErrorData *edata = CopyErrorData();
+		elog(LOG, "pg_datasentinel: error scanning pg_database: %s", edata->message);
+		FreeErrorData(edata);
+		if (scan != NULL)
+			table_endscan(scan);
+		if (rel != NULL)
+			table_close(rel, AccessShareLock);
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
 	return result;
 }
 
