@@ -18,8 +18,8 @@
 Oid
 pgds_get_oldest_mxid_database(void)
 {
-	Relation		rel = NULL;
-	TableScanDesc	scan = NULL;
+	volatile Relation		rel = NULL;
+	volatile TableScanDesc	scan = NULL;
 	HeapTuple		tup;
 	MultiXactId		oldest_mxid = MaxMultiXactId;
 	Oid				result = InvalidOid;
@@ -49,9 +49,9 @@ pgds_get_oldest_mxid_database(void)
 		elog(LOG, "pg_datasentinel: error scanning pg_database: %s", edata->message);
 		FreeErrorData(edata);
 		if (scan != NULL)
-			table_endscan(scan);
+			table_endscan((TableScanDesc) scan);
 		if (rel != NULL)
-			table_close(rel, AccessShareLock);
+			table_close((Relation) rel, AccessShareLock);
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
