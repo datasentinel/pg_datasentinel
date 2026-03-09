@@ -258,7 +258,8 @@ select
     newest_snapshot_at,
     CASE
         WHEN snapshot_interval IS NULL THEN NULL
-        else        CASE WHEN extract(day from snapshot_interval) > 0 THEN extract(day from snapshot_interval)::int || 'd ' else '' end ||
+        else        
+        CASE WHEN extract(day from snapshot_interval) > 0 THEN extract(day from snapshot_interval)::int || 'd ' else '' end ||
             EXTRACT(hour FROM snapshot_interval)::int || 'h ' ||
             EXTRACT(minute FROM snapshot_interval)::int || 'm ' ||
             FLOOR(EXTRACT(second FROM snapshot_interval))::int || 's'
