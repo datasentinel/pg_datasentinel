@@ -37,6 +37,39 @@ read_cgroup_ll(const char *path, long long *val)
 }
 
 /*
+ * Read the inactive_file counter from a cgroup memory.stat file.
+ * inactive_file is reclaimable page-cache memory that the kernel will
+ * reclaim under pressure, so it should be excluded from "real" usage.
+ * Returns true and sets *val on success, false otherwise.
+ */
+static bool
+read_inactive_file_bytes(const char *cpath, long long *val)
+{
+	char	fpath[MAXPGPATH];
+	FILE   *fp;
+	char	line[256];
+	bool	found;
+
+	snprintf(fpath, sizeof(fpath), "%s/memory.stat", cpath);
+	fp = fopen(fpath, "r");
+	if (!fp)
+		return false;
+
+	found = false;
+	while (fgets(line, sizeof(line), fp))
+	{
+		if (strncmp(line, "inactive_file ", 14) == 0)
+		{
+			if (sscanf(line + 14, "%lld", val) == 1)
+				found = true;
+			break;
+		}
+	}
+	fclose(fp);
+	return found;
+}
+
+/*
  * Parse the "some avg60=X.XX" value from a PSI cpu.pressure file.
  * Returns true and sets *avg60 on success, false otherwise.
  */
@@ -235,13 +268,18 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 			}
 		}
 
-		/* Memory used: memory.current */
+		/* Memory used: memory.current - inactive_file (real RSS) */
 		{
 			long long used;
+			long long inactive_file;
 
 			snprintf(fpath, sizeof(fpath), "%s/memory.current", cpath);
 			if (read_cgroup_ll(fpath, &used))
 			{
+				if (read_inactive_file_bytes(cpath, &inactive_file))
+					used -= inactive_file;
+				if (used < 0)
+					used = 0;
 				info->mem_used_set = true;
 				info->mem_used_bytes = (int64) used;
 			}
@@ -283,6 +321,12 @@ pgds_read_cgroup_info(PgdsCgroupInfo *info)
 			snprintf(fpath, sizeof(fpath), "%s/memory.usage_in_bytes", cpath);
 			if (read_cgroup_ll(fpath, &val))
 			{
+				long long inactive_file;
+
+				if (read_inactive_file_bytes(cpath, &inactive_file))
+					val -= inactive_file;
+				if (val < 0)
+					val = 0;
 				info->mem_used_set = true;
 				info->mem_used_bytes = (int64) val;
 			}
