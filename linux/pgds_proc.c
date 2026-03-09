@@ -6,6 +6,9 @@
 #include "common/file_utils.h"
 
 #include "pgds_proc.h"
+#if PG_VERSION_NUM < 170000
+#include "storage/fd.h"
+#endif
 
 bool
 pgds_is_dir_accessible(const char *path)
