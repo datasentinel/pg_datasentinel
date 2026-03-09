@@ -1180,7 +1180,7 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 		bool		nulls[DS_STAT_IDS_COLS] = {0};
 		int			i = 0;
 
-#if PG_VERSION_NUM >= 150000
+#if PG_VERSION_NUM >= 160000
 		local_beentry = pgstat_get_local_beentry_by_index(curr_backend);
 #else
 		local_beentry = pgstat_fetch_stat_local_beentry(curr_backend);
