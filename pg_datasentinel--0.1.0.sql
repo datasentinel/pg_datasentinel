@@ -211,8 +211,8 @@ LANGUAGE C VOLATILE;
 CREATE VIEW ds_wraparound_risk AS
 with risk as (
     SELECT 
-        LEAST(eta_aggressive_vacuum, COALESCE(eta_aggressive_vacuum_mxid, eta_aggressive_vacuum)) AS eta_aggressive_vacuum,
-        LEAST(eta_wraparound, COALESCE(eta_wraparound_mxid, eta_wraparound)) AS eta_wraparound,
+        COALESCE(LEAST(eta_aggressive_vacuum, eta_aggressive_vacuum_mxid), eta_aggressive_vacuum, eta_aggressive_vacuum_mxid) AS eta_aggressive_vacuum,
+        COALESCE(LEAST(eta_wraparound, eta_wraparound_mxid), eta_wraparound, eta_wraparound_mxid) AS eta_wraparound,
         CASE
             WHEN xids_to_wraparound < mxids_to_wraparound
                 THEN oldest_xid_database
