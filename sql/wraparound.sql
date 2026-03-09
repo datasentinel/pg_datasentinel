@@ -47,7 +47,6 @@ SELECT
     mxids_to_wraparound                   IS NOT NULL AS has_mxids_to_wrap,
     mxids_to_aggressive_vacuum            >  0        AS mxid_aggvac_positive,
     mxids_to_wraparound                   >  0        AS mxid_wrap_positive,
-    oldest_mxid_database                  IS NOT NULL AS has_mxid_db_name,
     mxid_rate_per_sec                     IS NULL     AS mxid_rate_null_when_1snap,
     eta_aggressive_vacuum                  IS NULL     AS eta_aggvac_null,
     eta_wraparound                        IS NULL     AS eta_wrap_null
