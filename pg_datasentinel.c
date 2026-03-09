@@ -773,8 +773,13 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	 */
 	cur_full_xid = ReadNextFullTransactionId();
 	cur_xid      = XidFromFullTransactionId(cur_full_xid);
+#if PG_VERSION_NUM >= 170000
 	xids_to_vac  = (int64) (int32) (TransamVariables->xidVacLimit  - cur_xid);
 	xids_to_wrap = (int64) (int32) (TransamVariables->xidWrapLimit - cur_xid);
+#else
+	xids_to_vac  = (int64) (int32) (ShmemVariableCache->xidVacLimit  - cur_xid);
+	xids_to_wrap = (int64) (int32) (ShmemVariableCache->xidWrapLimit - cur_xid);
+#endif
 
 	/*
 	 * MXID distances — recompute limits with the same formulas used by
@@ -855,9 +860,15 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	}
 
 	/* [7] oldest_xid_database */
+#if PG_VERSION_NUM >= 170000
 	if (OidIsValid(TransamVariables->oldestXidDB))
 	{
 		char *dbname = get_database_name(TransamVariables->oldestXidDB);
+#else
+	if (OidIsValid(ShmemVariableCache->oldestXidDB))
+	{
+		char *dbname = get_database_name(ShmemVariableCache->oldestXidDB);
+#endif
 		if (dbname)
 		{
 			values[7] = CStringGetTextDatum(dbname);
@@ -1169,7 +1180,11 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 		bool		nulls[DS_STAT_IDS_COLS] = {0};
 		int			i = 0;
 
+#if PG_VERSION_NUM >= 150000
 		local_beentry = pgstat_get_local_beentry_by_index(curr_backend);
+#else
+		local_beentry = pgstat_fetch_stat_local_beentry(curr_backend);
+#endif
 		beentry = &local_beentry->backendStatus;
 
 		values[i++] = Int64GetDatum(beentry->st_procpid);
@@ -1471,7 +1486,11 @@ pgds_log_xid_snapshot(void)
 	e->logged_at     = now;
 	e->next_xid      = (int64) U64FromFullTransactionId(ReadNextFullTransactionId());
 	e->next_mxid     = (int64) ReadNextMultiXactId();
+#if PG_VERSION_NUM >= 170000
 	e->oldest_xid_db = TransamVariables->oldestXidDB;
+#else
+	e->oldest_xid_db = ShmemVariableCache->oldestXidDB;
+#endif
 
 	pgds_xid_snapshot->tail = (pgds_xid_snapshot->tail + 1) % pgds_xid_snapshot->max;
 	if (pgds_xid_snapshot->count < pgds_xid_snapshot->max)

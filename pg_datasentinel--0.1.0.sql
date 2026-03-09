@@ -209,23 +209,65 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
 CREATE VIEW ds_wraparound_risk AS
+with risk as (
     SELECT 
         LEAST(eta_aggressive_vacuum, COALESCE(eta_aggressive_vacuum_mxid, eta_aggressive_vacuum)) AS eta_aggressive_vacuum,
         LEAST(eta_wraparound, COALESCE(eta_wraparound_mxid, eta_wraparound)) AS eta_wraparound,
-        oldest_xid_database,
-        oldest_mxid_database,
+        CASE
+            WHEN xids_to_wraparound < mxids_to_wraparound
+                THEN oldest_xid_database
+            ELSE oldest_mxid_database
+        END AS datname,
         txid_rate_per_sec,
         mxid_rate_per_sec,
         snapshot_count,
         oldest_snapshot_at,
         newest_snapshot_at,
-        CASE WHEN snapshot_count > 1 THEN newest_snapshot_at - oldest_snapshot_at END AS snapshot_span,
+        CASE
+            WHEN snapshot_count > 1
+                THEN newest_snapshot_at - oldest_snapshot_at
+        END AS snapshot_interval,
         xids_to_aggressive_vacuum,
         xids_to_wraparound,
         mxids_to_aggressive_vacuum,
         mxids_to_wraparound
-    FROM ds_wraparound_risk_info();
-
+    FROM ds_wraparound_risk_info()
+)
+select
+    CASE
+        WHEN eta_aggressive_vacuum IS NULL THEN NULL
+        else
+        CASE WHEN extract(day from eta_aggressive_vacuum) > 0 THEN extract(day from eta_aggressive_vacuum)::int || 'd ' else '' end ||
+            EXTRACT(hour FROM eta_aggressive_vacuum)::int || 'h ' ||
+            EXTRACT(minute FROM eta_aggressive_vacuum)::int || 'm ' ||
+            FLOOR(EXTRACT(second FROM eta_aggressive_vacuum))::int || 's'
+    END AS eta_aggressive_vacuum,
+    CASE
+        WHEN eta_wraparound IS NULL THEN NULL
+        else
+        CASE WHEN extract(day from eta_wraparound) > 0 THEN extract(day from eta_wraparound)::int || 'd ' else '' end ||
+            EXTRACT(hour FROM eta_wraparound)::int || 'h ' ||
+            EXTRACT(minute FROM eta_wraparound)::int || 'm ' ||
+            FLOOR(EXTRACT(second FROM eta_wraparound))::int || 's'
+    END AS eta_wraparound,
+    datname,
+    txid_rate_per_sec,
+    mxid_rate_per_sec,
+    snapshot_count,
+    oldest_snapshot_at,
+    newest_snapshot_at,
+    CASE
+        WHEN snapshot_interval IS NULL THEN NULL
+        else        CASE WHEN extract(day from snapshot_interval) > 0 THEN extract(day from snapshot_interval)::int || 'd ' else '' end ||
+            EXTRACT(hour FROM snapshot_interval)::int || 'h ' ||
+            EXTRACT(minute FROM snapshot_interval)::int || 'm ' ||
+            FLOOR(EXTRACT(second FROM snapshot_interval))::int || 's'
+    END AS snapshot_interval,
+    xids_to_aggressive_vacuum,
+    xids_to_wraparound,
+    mxids_to_aggressive_vacuum,
+    mxids_to_wraparound
+FROM risk;
 
 DO $$
 BEGIN

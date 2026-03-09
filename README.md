@@ -378,7 +378,7 @@ shared_preload_libraries = 'pg_datasentinel'
 log_autovacuum_min_duration = 0
 autovacuum_naptime = 1s
 ```
-
+ 
 ### Unit tests for internal parsing functions
 
 A companion test module exercises the C-level message-parsing functions (`pgds_parse_table_from_message`, `pgds_parse_vacuum_stats`, `pgds_parse_cpu_stats`) without requiring a live PostgreSQL cluster:
