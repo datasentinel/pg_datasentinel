@@ -2,6 +2,9 @@
 #include "fmgr.h"
 #include "lib/stringinfo.h"
 #include "utils/builtins.h"
+#include "nodes/makefuncs.h"
+#include "nodes/parsenodes.h"
+#include "nodes/value.h"
 
 #include "../pgds_utils.h"
 
@@ -16,6 +19,7 @@ PG_MODULE_MAGIC;
 PG_FUNCTION_INFO_V1(test_pgds_parse_table_from_message);
 PG_FUNCTION_INFO_V1(test_pgds_parse_vacuum_stats);
 PG_FUNCTION_INFO_V1(test_pgds_parse_cpu_stats);
+PG_FUNCTION_INFO_V1(test_pgds_vacuum_is_verbose);
 PG_FUNCTION_INFO_V1(test_pgds_proc_functions);
 PG_FUNCTION_INFO_V1(test_pgds_cgroup_info);
 
@@ -315,6 +319,61 @@ test_pgds_parse_cpu_stats(PG_FUNCTION_ARGS)
 		TEST("large: sys_cpu = 5.00",           FLOAT_EQ(sys_cpu,   5.00));
 		TEST("large: elapsed = 15.50",          FLOAT_EQ(elapsed,  15.50));
 	}
+
+	appendStringInfo(&buf, "\n%s\n",
+					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+}
+
+/*
+ * Build a VacuumStmt with a single boolean DefElem option.
+ */
+static VacuumStmt *
+make_vacuum_stmt(const char *optname, bool optval)
+{
+	VacuumStmt *stmt = makeNode(VacuumStmt);
+	DefElem    *opt = makeDefElem(pstrdup(optname),
+								  (Node *) makeBoolean(optval), -1);
+
+	stmt->options = list_make1(opt);
+	stmt->rels = NIL;
+	stmt->is_vacuumcmd = true;
+	return stmt;
+}
+
+/*
+ * test_pgds_vacuum_is_verbose
+ *
+ * Unit tests for pgds_vacuum_is_verbose() from pgds_utils.c.
+ */
+Datum
+test_pgds_vacuum_is_verbose(PG_FUNCTION_ARGS)
+{
+	StringInfoData	buf;
+	VacuumStmt	   *stmt;
+	int				failures = 0;
+
+	initStringInfo(&buf);
+
+	/* verbose = true */
+	stmt = make_vacuum_stmt("verbose", true);
+	TEST("verbose true: returns true", pgds_vacuum_is_verbose(stmt) == true);
+
+	/* verbose = false */
+	stmt = make_vacuum_stmt("verbose", false);
+	TEST("verbose false: returns false", pgds_vacuum_is_verbose(stmt) == false);
+
+	/* no options at all */
+	stmt = makeNode(VacuumStmt);
+	stmt->options = NIL;
+	stmt->rels = NIL;
+	stmt->is_vacuumcmd = true;
+	TEST("no options: returns false", pgds_vacuum_is_verbose(stmt) == false);
+
+	/* unrelated option only */
+	stmt = make_vacuum_stmt("analyze", true);
+	TEST("analyze option only: returns false", pgds_vacuum_is_verbose(stmt) == false);
 
 	appendStringInfo(&buf, "\n%s\n",
 					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");

@@ -5,6 +5,8 @@
 #include "access/multixact.h"
 #include "utils/rel.h"
 #include "utils/timestamp.h"
+#include "commands/defrem.h"
+#include "nodes/parsenodes.h"
 #include <regex.h>
 #include <stdlib.h>
 
@@ -74,6 +76,24 @@ pgds_secs_to_interval(double secs)
 	iv->day   = (int32) (secs / 86400.0);
 	iv->time  = (int64) ((secs - iv->day * 86400.0) * USECS_PER_SEC);
 	return iv;
+}
+
+/*
+ * Return true if the VacuumStmt has the VERBOSE option set.
+ */
+bool
+pgds_vacuum_is_verbose(VacuumStmt *stmt)
+{
+	ListCell   *lc;
+
+	foreach(lc, stmt->options)
+	{
+		DefElem    *opt = (DefElem *) lfirst(lc);
+
+		if (strcmp(opt->defname, "verbose") == 0)
+			return defGetBoolean(opt);
+	}
+	return false;
 }
 
 /*
