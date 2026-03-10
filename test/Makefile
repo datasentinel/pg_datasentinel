@@ -1,5 +1,11 @@
 MODULE_big = test_pg_datasentinel_internals
+
+UNAME_S := $(shell uname -s)
+ifeq ($(UNAME_S),Linux)
+OBJS = test_pg_datasentinel_internals.o ../pgds_utils.o ../linux/pgds_proc.o ../linux/pgds_cgroup.o
+else
 OBJS = test_pg_datasentinel_internals.o ../pgds_utils.o
+endif
 
 EXTENSION = test_pg_datasentinel_internals
 DATA = test_pg_datasentinel_internals--1.0.sql

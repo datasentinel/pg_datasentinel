@@ -5,11 +5,19 @@
 
 #include "../pgds_utils.h"
 
+#ifdef __linux__
+#include <unistd.h>
+#include "linux/pgds_proc.h"
+#include "linux/pgds_cgroup.h"
+#endif
+
 PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(test_pgds_parse_table_from_message);
 PG_FUNCTION_INFO_V1(test_pgds_parse_vacuum_stats);
 PG_FUNCTION_INFO_V1(test_pgds_parse_cpu_stats);
+PG_FUNCTION_INFO_V1(test_pgds_proc_functions);
+PG_FUNCTION_INFO_V1(test_pgds_cgroup_info);
 
 #define PASS_FAIL(cond)   ((cond) ? "PASS" : "FAIL")
 #define TEST(desc, cond) \
@@ -312,4 +320,94 @@ test_pgds_parse_cpu_stats(PG_FUNCTION_ARGS)
 					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
 
 	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+}
+
+/*
+ * test_pgds_proc_functions
+ *
+ * Unit tests for pgds_is_dir_accessible(), pgds_get_rss_memory_pages(), and
+ * pgds_get_temp_file_bytes() from linux/pgds_proc.c.
+ * On non-Linux platforms the function returns a SKIPPED notice.
+ */
+Datum
+test_pgds_proc_functions(PG_FUNCTION_ARGS)
+{
+#ifdef __linux__
+	StringInfoData	buf;
+	int				failures = 0;
+	int				mypid;
+	int64			val;
+
+	initStringInfo(&buf);
+
+	mypid = (int) getpid();
+
+	TEST("is_dir_accessible(/tmp) = true",
+		 pgds_is_dir_accessible("/tmp"));
+	TEST("is_dir_accessible(/nonexistent) = false",
+		 !pgds_is_dir_accessible("/nonexistent_pgds_test_xyz_123"));
+	TEST("is_dir_accessible(/etc/passwd) = false",
+		 !pgds_is_dir_accessible("/etc/passwd"));
+
+	val = pgds_get_rss_memory_pages(mypid);
+	TEST("get_rss_memory_pages(self) > 0", val > 0);
+
+	val = pgds_get_rss_memory_pages(-1);
+	TEST("get_rss_memory_pages(-1) = -1", val == -1);
+
+	val = pgds_get_temp_file_bytes(mypid);
+	TEST("get_temp_file_bytes(self) >= 0", val >= 0);
+
+	val = pgds_get_temp_file_bytes(-1);
+	TEST("get_temp_file_bytes(-1) = -1", val == -1);
+
+	appendStringInfo(&buf, "\n%s\n",
+					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+#else
+	PG_RETURN_TEXT_P(cstring_to_text("SKIPPED (not Linux)\n"));
+#endif
+}
+
+/*
+ * test_pgds_cgroup_info
+ *
+ * Unit tests for pgds_read_cgroup_info() from linux/pgds_cgroup.c.
+ * Validates structural invariants that hold regardless of whether cgroups are
+ * active on the host.  On non-Linux platforms returns a SKIPPED notice.
+ */
+Datum
+test_pgds_cgroup_info(PG_FUNCTION_ARGS)
+{
+#ifdef __linux__
+	StringInfoData	buf;
+	int				failures = 0;
+	PgdsCgroupInfo	info;
+	bool			has_cgroup;
+
+	initStringInfo(&buf);
+
+	has_cgroup = pgds_read_cgroup_info(&info);
+
+	TEST("read_cgroup_info completes without error", true);
+	TEST("version matches cgroup availability",
+		 has_cgroup ? (info.version == 1 || info.version == 2)
+					: info.version == 0);
+	TEST("cpu_limit_set implies cpu_limit > 0",
+		 !info.cpu_limit_set || info.cpu_limit > 0.0);
+	TEST("mem_limit_set implies mem_limit_bytes > 0",
+		 !info.mem_limit_set || info.mem_limit_bytes > 0);
+	TEST("mem_used_set implies mem_used_bytes >= 0",
+		 !info.mem_used_set || info.mem_used_bytes >= 0);
+	TEST("cpu_pressure_set implies version == 2",
+		 !info.cpu_pressure_set || info.version == 2);
+
+	appendStringInfo(&buf, "\n%s\n",
+					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+#else
+	PG_RETURN_TEXT_P(cstring_to_text("SKIPPED (not Linux)\n"));
+#endif
 }

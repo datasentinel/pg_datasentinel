@@ -84,6 +84,37 @@ SELECT test_pgds_parse_cpu_stats();
  
 (1 row)
 
+-- Test pgds_proc.c functions (Linux only; returns SKIPPED on other platforms)
+SELECT test_pgds_proc_functions();
+                    test_pgds_proc_functions                     
+-----------------------------------------------------------------
+ Test: is_dir_accessible(/tmp) = true                       PASS+
+ Test: is_dir_accessible(/nonexistent) = false              PASS+
+ Test: is_dir_accessible(/etc/passwd) = false               PASS+
+ Test: get_rss_memory_pages(self) > 0                       PASS+
+ Test: get_rss_memory_pages(-1) = -1                        PASS+
+ Test: get_temp_file_bytes(self) >= 0                       PASS+
+ Test: get_temp_file_bytes(-1) = -1                         PASS+
+                                                                +
+ All tests PASSED                                               +
+ 
+(1 row)
+
+-- Test pgds_cgroup.c functions (Linux only; returns SKIPPED on other platforms)
+SELECT test_pgds_cgroup_info();
+                      test_pgds_cgroup_info                      
+-----------------------------------------------------------------
+ Test: read_cgroup_info completes without error             PASS+
+ Test: version matches cgroup availability                  PASS+
+ Test: cpu_limit_set implies cpu_limit > 0                  PASS+
+ Test: mem_limit_set implies mem_limit_bytes > 0            PASS+
+ Test: mem_used_set implies mem_used_bytes >= 0             PASS+
+ Test: cpu_pressure_set implies version == 2                PASS+
+                                                                +
+ All tests PASSED                                               +
+ 
+(1 row)
+
 -- Cleanup
 DROP EXTENSION test_pg_datasentinel_internals;
 DROP EXTENSION pg_datasentinel;
