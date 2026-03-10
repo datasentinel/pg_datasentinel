@@ -109,11 +109,11 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
 CREATE VIEW ds_container_resources AS
-    SELECT cgroup_version,
-        cpu_limit,
+    SELECT cpu_limit,
         cpu_pressure_pct_60s,
         mem_limit_bytes,
-        mem_used as mem_used_bytes
+        mem_used as mem_used_bytes,
+        cgroup_version
     FROM ds_container_resource_info();
 
 
