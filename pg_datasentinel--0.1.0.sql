@@ -241,7 +241,7 @@ select
             EXTRACT(hour FROM eta_aggressive_vacuum)::int || 'h ' ||
             EXTRACT(minute FROM eta_aggressive_vacuum)::int || 'm ' ||
             FLOOR(EXTRACT(second FROM eta_aggressive_vacuum))::int || 's'
-    END AS eta_aggressive_vacuum,
+    END AS eta_aggressive_vacuum_fmt,
     CASE
         WHEN eta_wraparound IS NULL THEN NULL
         else
@@ -249,7 +249,7 @@ select
             EXTRACT(hour FROM eta_wraparound)::int || 'h ' ||
             EXTRACT(minute FROM eta_wraparound)::int || 'm ' ||
             FLOOR(EXTRACT(second FROM eta_wraparound))::int || 's'
-    END AS eta_wraparound,
+    END AS eta_wraparound_fmt,
     datname,
     txid_rate_per_sec,
     mxid_rate_per_sec,
@@ -267,7 +267,9 @@ select
     xids_to_aggressive_vacuum,
     xids_to_wraparound,
     mxids_to_aggressive_vacuum,
-    mxids_to_wraparound
+    mxids_to_wraparound,
+    eta_aggressive_vacuum,
+    eta_wraparound
 FROM risk;
 
 DO $$
