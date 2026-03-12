@@ -1324,7 +1324,8 @@ pgds_log_autoanalyze(ErrorData *edata)
 	{
 		strlcpy(schemaname, pgds_analyze_schemaname, NAMEDATALEN);
 	}
-	if (relname[0] == '\0' && pgds_analyze_relname[0] != '\0') {
+	if (relname[0] == '\0' && pgds_analyze_relname[0] != '\0')
+	{
 		strlcpy(relname, pgds_analyze_relname, NAMEDATALEN);
 	}
 
