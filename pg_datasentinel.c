@@ -1549,10 +1549,22 @@ pgds_emit_log(ErrorData *edata)
 		}
 		else if (strstr(edata->message, "analyzing ") != NULL)
 		{
+			/* Reset previous state before attempting to parse */
+			pgds_analyze_schemaname[0] = '\0';
+			pgds_analyze_relname[0] = '\0';
+
 			pgds_parse_table_from_analyzing(edata->message,
 											pgds_analyze_schemaname,
 											pgds_analyze_relname);
-			pgds_analyze_pending = true;
+
+			/*
+			 * Only arm the pending flag if parsing produced non-empty
+			 * schema and relation names. Otherwise, treat this as an
+			 * unrecognized message format and ignore it.
+			 */
+			if (pgds_analyze_schemaname[0] != '\0' &&
+				pgds_analyze_relname[0] != '\0')
+				pgds_analyze_pending = true;
 		}
 		else if (pgds_analyze_pending)
 		{
