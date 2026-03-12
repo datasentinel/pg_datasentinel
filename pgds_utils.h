@@ -9,6 +9,7 @@ extern bool      pgds_vacuum_is_verbose(VacuumStmt *stmt);
 extern Oid       pgds_get_oldest_mxid_database(void);
 extern Interval *pgds_secs_to_interval(double secs);
 extern void pgds_parse_table_from_message(const char *message, char *schemaname, char *relname);
+extern void pgds_parse_table_from_vacuuming(const char *message, char *schemaname, char *relname);
 extern void pgds_parse_table_from_analyzing(const char *message, char *schemaname, char *relname);
 extern void pgds_parse_vacuum_stats(const char *message,
 									int64 *pages_removed,

@@ -6,7 +6,7 @@ CREATE TABLE test_mv (id int);
 -- DELETE FROM test_mv;
 
 -- Disable force_verbose so verbosity is controlled explicitly.
-SET pg_datasentinel.vacuum_force_verbose = off;
+SET pg_datasentinel.maintenance_force_verbose = off;
 
 -- Test 2: ANALYZE VERBOSE should be captured in ds_autoanalyze_activity.
 ANALYZE test_mv;
@@ -23,8 +23,8 @@ WHERE message ~* 'test_mv';
 
 SELECT ds_autoanalyze_activity_reset();
 
--- Test 4: With vacuum_force_verbose = on, plain VACUUM is captured.
-SET pg_datasentinel.vacuum_force_verbose = on;
+-- Test 4: With maintenance_force_verbose = on, plain ANALYZE is captured.
+SET pg_datasentinel.maintenance_force_verbose = on;
 
 -- Test 2: ANALYZE VERBOSE should be captured in ds_autoanalyze_activity.
 ANALYZE test_mv;

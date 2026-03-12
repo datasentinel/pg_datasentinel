@@ -17,6 +17,8 @@
 PG_MODULE_MAGIC;
 
 PG_FUNCTION_INFO_V1(test_pgds_parse_table_from_message);
+PG_FUNCTION_INFO_V1(test_pgds_parse_table_from_vacuuming);
+PG_FUNCTION_INFO_V1(test_pgds_parse_table_from_analyzing);
 PG_FUNCTION_INFO_V1(test_pgds_parse_vacuum_stats);
 PG_FUNCTION_INFO_V1(test_pgds_parse_cpu_stats);
 PG_FUNCTION_INFO_V1(test_pgds_vacuum_is_verbose);
@@ -87,6 +89,104 @@ test_pgds_parse_table_from_message(PG_FUNCTION_ARGS)
 		schemaname, relname);
 	TEST("one dot: schemaname is empty", schemaname[0] == '\0');
 	TEST("one dot: relname is empty",    relname[0] == '\0');
+
+	appendStringInfo(&buf, "\n%s\n",
+					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+}
+
+Datum
+test_pgds_parse_table_from_vacuuming(PG_FUNCTION_ARGS)
+{
+	StringInfoData buf;
+	char		schemaname[NAMEDATALEN];
+	char		relname[NAMEDATALEN];
+	int			failures = 0;
+
+	initStringInfo(&buf);
+
+	/* Test: normal manual vacuum */
+	pgds_parse_table_from_vacuuming(
+		"finished vacuuming \"public.mytable\": index scans: 0",
+		schemaname, relname);
+	TEST("vacuum: schemaname = public",  strcmp(schemaname, "public") == 0);
+	TEST("vacuum: relname = mytable",    strcmp(relname, "mytable") == 0);
+
+	/* Test: non-default schema */
+	pgds_parse_table_from_vacuuming(
+		"finished vacuuming \"myschema.orders\": index scans: 1",
+		schemaname, relname);
+	TEST("schema: schemaname = myschema", strcmp(schemaname, "myschema") == 0);
+	TEST("schema: relname = orders",      strcmp(relname, "orders") == 0);
+
+	/* Test: no "finished vacuuming" pattern → empty strings */
+	pgds_parse_table_from_vacuuming("some unrelated log message", schemaname, relname);
+	TEST("no match: schemaname is empty", schemaname[0] == '\0');
+	TEST("no match: relname is empty",    relname[0] == '\0');
+
+	/* Test: missing closing quote → empty strings */
+	pgds_parse_table_from_vacuuming(
+		"finished vacuuming \"public.broken",
+		schemaname, relname);
+	TEST("missing close quote: schemaname is empty", schemaname[0] == '\0');
+	TEST("missing close quote: relname is empty",    relname[0] == '\0');
+
+	/* Test: no dot inside quotes → empty strings */
+	pgds_parse_table_from_vacuuming(
+		"finished vacuuming \"nodothere\"",
+		schemaname, relname);
+	TEST("no dot: schemaname is empty", schemaname[0] == '\0');
+	TEST("no dot: relname is empty",    relname[0] == '\0');
+
+	appendStringInfo(&buf, "\n%s\n",
+					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
+
+	PG_RETURN_TEXT_P(cstring_to_text(buf.data));
+}
+
+Datum
+test_pgds_parse_table_from_analyzing(PG_FUNCTION_ARGS)
+{
+	StringInfoData buf;
+	char		schemaname[NAMEDATALEN];
+	char		relname[NAMEDATALEN];
+	int			failures = 0;
+
+	initStringInfo(&buf);
+
+	/* Test: normal case */
+	pgds_parse_table_from_analyzing(
+		"analyzing \"public.mytable\"",
+		schemaname, relname);
+	TEST("analyze: schemaname = public", strcmp(schemaname, "public") == 0);
+	TEST("analyze: relname = mytable",   strcmp(relname, "mytable") == 0);
+
+	/* Test: non-default schema */
+	pgds_parse_table_from_analyzing(
+		"analyzing \"myschema.orders\"",
+		schemaname, relname);
+	TEST("schema: schemaname = myschema", strcmp(schemaname, "myschema") == 0);
+	TEST("schema: relname = orders",      strcmp(relname, "orders") == 0);
+
+	/* Test: no "analyzing" pattern → empty strings */
+	pgds_parse_table_from_analyzing("some unrelated log message", schemaname, relname);
+	TEST("no match: schemaname is empty", schemaname[0] == '\0');
+	TEST("no match: relname is empty",    relname[0] == '\0');
+
+	/* Test: missing closing quote → empty strings */
+	pgds_parse_table_from_analyzing(
+		"analyzing \"public.broken",
+		schemaname, relname);
+	TEST("missing close quote: schemaname is empty", schemaname[0] == '\0');
+	TEST("missing close quote: relname is empty",    relname[0] == '\0');
+
+	/* Test: no dot inside quotes → empty strings */
+	pgds_parse_table_from_analyzing(
+		"analyzing \"nodothere\"",
+		schemaname, relname);
+	TEST("no dot: schemaname is empty", schemaname[0] == '\0');
+	TEST("no dot: relname is empty",    relname[0] == '\0');
 
 	appendStringInfo(&buf, "\n%s\n",
 					 failures == 0 ? "All tests PASSED" : "Some tests FAILED");
