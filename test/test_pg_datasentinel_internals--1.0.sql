@@ -6,6 +6,16 @@ RETURNS text
 AS 'MODULE_PATHNAME'
 LANGUAGE C STRICT;
 
+CREATE FUNCTION test_pgds_parse_table_from_vacuuming()
+RETURNS text
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
+CREATE FUNCTION test_pgds_parse_table_from_analyzing()
+RETURNS text
+AS 'MODULE_PATHNAME'
+LANGUAGE C STRICT;
+
 CREATE FUNCTION test_pgds_parse_vacuum_stats()
 RETURNS text
 AS 'MODULE_PATHNAME'

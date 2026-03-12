@@ -254,7 +254,7 @@ static char	pgds_analyze_schemaname[NAMEDATALEN];	/* schema parsed from "analyzi
 static char	pgds_analyze_relname[NAMEDATALEN];		/* relname parsed from "analyzing" line */
 static int	pgds_max_actions;		/* max # actions to track */
 static bool	pgds_enabled;		/* enable/disable log capture at runtime */
-static bool	pgds_vacuum_force_verbose;	/* force VERBOSE on manual VACUUMs */
+static bool	pgds_maintenance_force_verbose; /* force VERBOSE on manual VACUUM/ANALYZE */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
@@ -1262,6 +1262,8 @@ pgds_log_autovacuum(ErrorData *edata)
 	PgdsAutovacuumEntry *e;
 
 	pgds_parse_table_from_message(edata->message, schemaname, relname);
+	if (schemaname[0] == '\0')
+		pgds_parse_table_from_vacuuming(edata->message, schemaname, relname);
 	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
 	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
 
@@ -1617,9 +1619,9 @@ pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
 	bool		is_vacuum;
 	int			saved_log_min_messages;
 
-	is_vacuum = !readOnlyTree && IsA(pstmt->utilityStmt, VacuumStmt);
+	is_vacuum = IsA(pstmt->utilityStmt, VacuumStmt);
 
-	if (is_vacuum && pgds_enabled && pgds_vacuum_force_verbose)
+	if (is_vacuum && pgds_enabled && pgds_maintenance_force_verbose)
 	{
 		VacuumStmt *stmt = (VacuumStmt *) pstmt->utilityStmt;
 
@@ -1712,10 +1714,10 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
-	DefineCustomBoolVariable("pg_datasentinel.vacuum_force_verbose",
-							 "Forces VERBOSE output on all manual VACUUM commands.",
+	DefineCustomBoolVariable("pg_datasentinel.maintenance_force_verbose",
+							 "Forces VERBOSE output on all manual VACUUM and ANALYZE commands.",
 							 NULL,
-							 &pgds_vacuum_force_verbose,
+							 &pgds_maintenance_force_verbose,
 							 false,
 							 PGC_SUSET,
 							 0,

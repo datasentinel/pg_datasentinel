@@ -152,6 +152,52 @@ pgds_parse_table_from_message(const char *message, char *schemaname, char *relna
 }
 
 /*
+ * Parse schemaname and relname from a manual VACUUM INFO message.
+ *
+ * The message format is:
+ *   finished vacuuming "schema.table": ...
+ *
+ * Writes empty strings if the pattern is not found.
+ */
+void
+pgds_parse_table_from_vacuuming(const char *message, char *schemaname, char *relname)
+{
+	const char *start;
+	const char *end;
+	const char *dot;
+	int			len;
+
+	schemaname[0] = '\0';
+	relname[0] = '\0';
+
+	start = strstr(message, "finished vacuuming \"");
+	if (start == NULL)
+		return;
+	start += strlen("finished vacuuming \"");
+
+	end = strchr(start, '"');
+	if (end == NULL)
+		return;
+
+	dot = memchr(start, '.', end - start);
+	if (dot == NULL)
+		return;
+
+	len = dot - start;
+	if (len >= NAMEDATALEN)
+		len = NAMEDATALEN - 1;
+	memcpy(schemaname, start, len);
+	schemaname[len] = '\0';
+
+	dot++;
+	len = end - dot;
+	if (len >= NAMEDATALEN)
+		len = NAMEDATALEN - 1;
+	memcpy(relname, dot, len);
+	relname[len] = '\0';
+}
+
+/*
  * Parse schemaname and relname from a manual ANALYZE INFO message.
  *
  * The message format is:
