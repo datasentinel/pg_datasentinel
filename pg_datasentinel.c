@@ -12,6 +12,7 @@
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
 #include "nodes/makefuncs.h"
+#include "nodes/value.h"
 #include "utils/timestamp.h"
 #include "commands/dbcommands.h"
 #include "catalog/namespace.h"
@@ -216,6 +217,7 @@ typedef struct PgdsXidSnapshotSharedState
 /* Saved hook values in case of unload */
 static shmem_startup_hook_type prev_shmem_startup_hook = NULL;
 static emit_log_hook_type prev_emit_log_hook = NULL;
+static ProcessUtility_hook_type prev_process_utility_hook = NULL;
 #if PG_VERSION_NUM >= 150000
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
 #endif
@@ -240,10 +242,19 @@ static void pgds_log_autoanalyze(ErrorData *edata);
 static void pgds_log_tempfile(ErrorData *edata);
 static void pgds_log_checkpoint(ErrorData *edata, bool is_restartpoint);
 static void pgds_log_xid_snapshot(void);
+static void pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
+								 bool readOnlyTree, ProcessUtilityContext context,
+								 ParamListInfo params, QueryEnvironment *queryEnv,
+								 DestReceiver *dest, QueryCompletion *qc);
 
 
-static int	max_actions;		/* max # actions to track */
+static int	pgds_vacuum_nest_level = 0; /* Nesting level for manual VACUUM statements */
+static bool	pgds_analyze_pending = false;	/* true after "analyzing" INFO, waiting for stats line */
+static char	pgds_analyze_schemaname[NAMEDATALEN];	/* schema parsed from "analyzing" line */
+static char	pgds_analyze_relname[NAMEDATALEN];		/* relname parsed from "analyzing" line */
+static int	pgds_max_actions;		/* max # actions to track */
 static bool	pgds_enabled;		/* enable/disable log capture at runtime */
+static bool	pgds_vacuum_force_verbose;	/* force VERBOSE on manual VACUUMs */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_autovacuum_msgs);
@@ -1034,35 +1045,35 @@ static Size
 pgds_memsize(void)
 {
 	return add_size(offsetof(PgdsAutovacuumSharedState, entries),
-					mul_size(max_actions, sizeof(PgdsAutovacuumEntry)));
+					mul_size(pgds_max_actions, sizeof(PgdsAutovacuumEntry)));
 }
 
 static Size
 pgds_analyze_memsize(void)
 {
 	return add_size(offsetof(PgdsAutoanalyzeSharedState, entries),
-					mul_size(max_actions, sizeof(PgdsAutoanalyzeEntry)));
+					mul_size(pgds_max_actions, sizeof(PgdsAutoanalyzeEntry)));
 }
 
 static Size
 pgds_tempfile_memsize(void)
 {
 	return add_size(offsetof(PgdsTempfileSharedState, entries),
-					mul_size(max_actions, sizeof(PgdsTempfileEntry)));
+					mul_size(pgds_max_actions, sizeof(PgdsTempfileEntry)));
 }
 
 static Size
 pgds_checkpoint_memsize(void)
 {
 	return add_size(offsetof(PgdsCheckpointSharedState, entries),
-					mul_size(max_actions, sizeof(PgdsCheckpointEntry)));
+					mul_size(pgds_max_actions, sizeof(PgdsCheckpointEntry)));
 }
 
 static Size
 pgds_xid_snapshot_memsize(void)
 {
 	return add_size(offsetof(PgdsXidSnapshotSharedState, entries),
-					mul_size(max_actions, sizeof(PgdsXidSnapshotEntry)));
+					mul_size(pgds_max_actions, sizeof(PgdsXidSnapshotEntry)));
 }
 
 /*
@@ -1107,8 +1118,8 @@ pgds_shmem_startup(void)
 		pgds_autovacuum->head  = 0;
 		pgds_autovacuum->tail  = 0;
 		pgds_autovacuum->count = 0;
-		pgds_autovacuum->max   = max_actions;
-		memset(pgds_autovacuum->entries, 0, mul_size(max_actions, sizeof(PgdsAutovacuumEntry)));
+		pgds_autovacuum->max   = pgds_max_actions;
+		memset(pgds_autovacuum->entries, 0, mul_size(pgds_max_actions, sizeof(PgdsAutovacuumEntry)));
 	}
 
 	pgds_autoanalyze = ShmemInitStruct("pgds_analyze", pgds_analyze_memsize(), &found);
@@ -1118,8 +1129,8 @@ pgds_shmem_startup(void)
 		pgds_autoanalyze->head  = 0;
 		pgds_autoanalyze->tail  = 0;
 		pgds_autoanalyze->count = 0;
-		pgds_autoanalyze->max   = max_actions;
-		memset(pgds_autoanalyze->entries, 0, mul_size(max_actions, sizeof(PgdsAutoanalyzeEntry)));
+		pgds_autoanalyze->max   = pgds_max_actions;
+		memset(pgds_autoanalyze->entries, 0, mul_size(pgds_max_actions, sizeof(PgdsAutoanalyzeEntry)));
 	}
 
 	pgds_tempfile = ShmemInitStruct("pgds_tempfile", pgds_tempfile_memsize(), &found);
@@ -1129,8 +1140,8 @@ pgds_shmem_startup(void)
 		pgds_tempfile->head  = 0;
 		pgds_tempfile->tail  = 0;
 		pgds_tempfile->count = 0;
-		pgds_tempfile->max   = max_actions;
-		memset(pgds_tempfile->entries, 0, mul_size(max_actions, sizeof(PgdsTempfileEntry)));
+		pgds_tempfile->max   = pgds_max_actions;
+		memset(pgds_tempfile->entries, 0, mul_size(pgds_max_actions, sizeof(PgdsTempfileEntry)));
 	}
 
 	pgds_checkpoint = ShmemInitStruct("pgds_checkpoint", pgds_checkpoint_memsize(), &found);
@@ -1140,8 +1151,8 @@ pgds_shmem_startup(void)
 		pgds_checkpoint->head  = 0;
 		pgds_checkpoint->tail  = 0;
 		pgds_checkpoint->count = 0;
-		pgds_checkpoint->max   = max_actions;
-		memset(pgds_checkpoint->entries, 0, mul_size(max_actions, sizeof(PgdsCheckpointEntry)));
+		pgds_checkpoint->max   = pgds_max_actions;
+		memset(pgds_checkpoint->entries, 0, mul_size(pgds_max_actions, sizeof(PgdsCheckpointEntry)));
 	}
 
 	pgds_xid_snapshot = ShmemInitStruct("pgds_xid_snapshot", pgds_xid_snapshot_memsize(), &found);
@@ -1151,8 +1162,8 @@ pgds_shmem_startup(void)
 		pgds_xid_snapshot->head  = 0;
 		pgds_xid_snapshot->tail  = 0;
 		pgds_xid_snapshot->count = 0;
-		pgds_xid_snapshot->max   = max_actions;
-		memset(pgds_xid_snapshot->entries, 0, mul_size(max_actions, sizeof(PgdsXidSnapshotEntry)));
+		pgds_xid_snapshot->max   = pgds_max_actions;
+		memset(pgds_xid_snapshot->entries, 0, mul_size(pgds_max_actions, sizeof(PgdsXidSnapshotEntry)));
 	}
 
 	LWLockRelease(AddinShmemInitLock);
@@ -1309,6 +1320,15 @@ pgds_log_autoanalyze(ErrorData *edata)
 	PgdsAutoanalyzeEntry *e;
 
 	pgds_parse_table_from_message(edata->message, schemaname, relname);
+	if (schemaname[0] == '\0' && pgds_analyze_schemaname[0] != '\0')
+	{
+		strlcpy(schemaname, pgds_analyze_schemaname, NAMEDATALEN);
+	}
+	if (relname[0] == '\0' && pgds_analyze_relname[0] != '\0')
+	{
+		strlcpy(relname, pgds_analyze_relname, NAMEDATALEN);
+	}
+
 	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
 	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
 
@@ -1517,11 +1537,50 @@ pgds_emit_log(ErrorData *edata)
 	if (!pgds_enabled)
 		return;
 
-	/* Only interested in LOG-level messages going to the server log */
-	if (edata->elevel != LOG || !edata->output_to_server)
+	if (edata->message == NULL)
 		return;
 
-	if (edata->message == NULL)
+	/* Manual VACUUM/ANALYZE: capture INFO messages */
+	if (pgds_vacuum_nest_level > 0 && edata->elevel == INFO)
+	{
+		if (strstr(edata->message, "finished vacuuming") != NULL)
+		{
+			if (pgds_autovacuum != NULL)
+				pgds_log_autovacuum(edata);
+		}
+		else if (strstr(edata->message, "analyzing ") != NULL)
+		{
+			/* Reset previous state before attempting to parse */
+			pgds_analyze_schemaname[0] = '\0';
+			pgds_analyze_relname[0] = '\0';
+
+			pgds_parse_table_from_analyzing(edata->message,
+											pgds_analyze_schemaname,
+											pgds_analyze_relname);
+
+			/*
+			 * Only arm the pending flag if parsing produced non-empty
+			 * schema and relation names. Otherwise, treat this as an
+			 * unrecognized message format and ignore it.
+			 */
+			if (pgds_analyze_schemaname[0] != '\0' &&
+				pgds_analyze_relname[0] != '\0')
+				pgds_analyze_pending = true;
+		}
+		else if (pgds_analyze_pending)
+		{
+			/* Second INFO line: the per-table stats summary */
+			if (pgds_autoanalyze != NULL)
+				pgds_log_autoanalyze(edata);
+			pgds_analyze_pending = false;
+			pgds_analyze_schemaname[0] = '\0';
+			pgds_analyze_relname[0] = '\0';
+		}
+		return;
+	}
+
+	/* Only interested in LOG-level messages going to the server log */
+	if (edata->elevel != LOG || !edata->output_to_server)
 		return;
 
 	if (edata->message_id != NULL)
@@ -1562,6 +1621,82 @@ pgds_emit_log(ErrorData *edata)
 }
 
 
+static void
+pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
+					 bool readOnlyTree, ProcessUtilityContext context,
+					 ParamListInfo params, QueryEnvironment *queryEnv,
+					 DestReceiver *dest, QueryCompletion *qc)
+{
+	bool		is_vacuum;
+	int			saved_log_min_messages;
+
+	is_vacuum = !readOnlyTree && IsA(pstmt->utilityStmt, VacuumStmt);
+
+	if (is_vacuum && pgds_enabled && pgds_vacuum_force_verbose)
+	{
+		VacuumStmt *stmt = (VacuumStmt *) pstmt->utilityStmt;
+
+		if (!pgds_vacuum_is_verbose(stmt))
+		{
+			PlannedStmt *pstmt_copy = copyObject(pstmt);
+			VacuumStmt *stmt_copy = (VacuumStmt *) pstmt_copy->utilityStmt;
+
+			stmt_copy->options = lappend(stmt_copy->options,
+										 makeDefElem("verbose",
+													 (Node *) makeBoolean(true),
+													 -1));
+			pstmt = pstmt_copy;
+		}
+	}
+
+	if (is_vacuum)
+	{
+		pgds_vacuum_nest_level++;
+
+		/*
+		 * INFO messages from VACUUM/ANALYZE VERBOSE only have output_to_server
+		 * set when log_min_messages <= INFO.  Lower it temporarily so that
+		 * emit_log_hook fires for those messages.
+		 */
+		saved_log_min_messages = log_min_messages;
+		if (pgds_enabled)
+			log_min_messages = Min(log_min_messages, INFO);
+	}
+
+	PG_TRY();
+	{
+		if (prev_process_utility_hook)
+			prev_process_utility_hook(pstmt, queryString, readOnlyTree,
+									  context, params, queryEnv, dest, qc);
+		else
+			standard_ProcessUtility(pstmt, queryString, readOnlyTree,
+									context, params, queryEnv, dest, qc);
+	}
+	PG_CATCH();
+	{
+		if (is_vacuum)
+		{
+			pgds_vacuum_nest_level--;
+			log_min_messages = saved_log_min_messages;
+			pgds_analyze_pending = false;
+			pgds_analyze_schemaname[0] = '\0';
+			pgds_analyze_relname[0] = '\0';
+		}
+		PG_RE_THROW();
+	}
+	PG_END_TRY();
+
+	if (is_vacuum)
+	{
+		pgds_vacuum_nest_level--;
+		log_min_messages = saved_log_min_messages;
+		pgds_analyze_pending = false;
+		pgds_analyze_schemaname[0] = '\0';
+		pgds_analyze_relname[0] = '\0';
+	}
+}
+
+
 void
 _PG_init(void)
 {
@@ -1590,10 +1725,21 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
+	DefineCustomBoolVariable("pg_datasentinel.vacuum_force_verbose",
+							 "Forces VERBOSE output on all manual VACUUM commands.",
+							 NULL,
+							 &pgds_vacuum_force_verbose,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
 	DefineCustomIntVariable("pg_datasentinel.max",
 							"Sets the maximum number of actions tracked by pg_datasentinel.",
 							NULL,
-							&max_actions,
+							&pgds_max_actions,
 							5000,
 							100,
 							INT_MAX / 2,
@@ -1617,6 +1763,8 @@ _PG_init(void)
 	shmem_startup_hook = pgds_shmem_startup;
 	prev_emit_log_hook = emit_log_hook;
 	emit_log_hook = pgds_emit_log;
+	prev_process_utility_hook = ProcessUtility_hook;
+	ProcessUtility_hook = pgds_process_utility;
 
 }
 
@@ -1629,4 +1777,5 @@ _PG_fini(void)
 #endif
 	shmem_startup_hook = prev_shmem_startup_hook;
 	emit_log_hook = prev_emit_log_hook;
+	ProcessUtility_hook = prev_process_utility_hook;
 }

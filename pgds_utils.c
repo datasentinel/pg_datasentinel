@@ -5,6 +5,8 @@
 #include "access/multixact.h"
 #include "utils/rel.h"
 #include "utils/timestamp.h"
+#include "commands/defrem.h"
+#include "nodes/parsenodes.h"
 #include <regex.h>
 #include <stdlib.h>
 
@@ -77,6 +79,24 @@ pgds_secs_to_interval(double secs)
 }
 
 /*
+ * Return true if the VacuumStmt has the VERBOSE option set.
+ */
+bool
+pgds_vacuum_is_verbose(VacuumStmt *stmt)
+{
+	ListCell   *lc;
+
+	foreach(lc, stmt->options)
+	{
+		DefElem    *opt = (DefElem *) lfirst(lc);
+
+		if (strcmp(opt->defname, "verbose") == 0)
+			return defGetBoolean(opt);
+	}
+	return false;
+}
+
+/*
  * Parse schemaname and relname from alog message.
  *
  * The message format is:
@@ -128,6 +148,52 @@ pgds_parse_table_from_message(const char *message, char *schemaname, char *relna
 	if (len >= NAMEDATALEN)
 		len = NAMEDATALEN - 1;
 	memcpy(relname, dot2, len);
+	relname[len] = '\0';
+}
+
+/*
+ * Parse schemaname and relname from a manual ANALYZE INFO message.
+ *
+ * The message format is:
+ *   analyzing "schema.table"
+ *
+ * Writes empty strings if the pattern is not found.
+ */
+void
+pgds_parse_table_from_analyzing(const char *message, char *schemaname, char *relname)
+{
+	const char *start;
+	const char *end;
+	const char *dot;
+	int			len;
+
+	schemaname[0] = '\0';
+	relname[0] = '\0';
+
+	start = strstr(message, "analyzing \"");
+	if (start == NULL)
+		return;
+	start += strlen("analyzing \"");
+
+	end = strchr(start, '"');
+	if (end == NULL)
+		return;
+
+	dot = memchr(start, '.', end - start);
+	if (dot == NULL)
+		return;
+
+	len = dot - start;
+	if (len >= NAMEDATALEN)
+		len = NAMEDATALEN - 1;
+	memcpy(schemaname, start, len);
+	schemaname[len] = '\0';
+
+	dot++;
+	len = end - dot;
+	if (len >= NAMEDATALEN)
+		len = NAMEDATALEN - 1;
+	memcpy(relname, dot, len);
 	relname[len] = '\0';
 }
 

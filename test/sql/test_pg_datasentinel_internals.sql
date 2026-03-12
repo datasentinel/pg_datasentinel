@@ -15,6 +15,9 @@ SELECT test_pgds_parse_vacuum_stats();
 -- Test pgds_parse_cpu_stats() and match_to_double() from pgds_utils.c
 SELECT test_pgds_parse_cpu_stats();
 
+-- Test pgds_vacuum_is_verbose() from pgds_utils.c
+SELECT test_pgds_vacuum_is_verbose();
+
 -- Test pgds_proc.c functions (Linux only; returns SKIPPED on other platforms)
 SELECT test_pgds_proc_functions();
 
