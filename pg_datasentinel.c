@@ -222,9 +222,6 @@ static ProcessUtility_hook_type prev_process_utility_hook = NULL;
 static shmem_request_hook_type prev_shmem_request_hook = NULL;
 #endif
 
-/* Nesting level for manual VACUUM statements */
-static int	pgds_vacuum_nest_level = 0;
-
 /* Pointers to the shared-memory ring buffers */
 static PgdsAutovacuumSharedState *pgds_autovacuum = NULL;
 static PgdsAutoanalyzeSharedState *pgds_autoanalyze = NULL;
@@ -251,6 +248,10 @@ static void pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
 								 DestReceiver *dest, QueryCompletion *qc);
 
 
+static int	pgds_vacuum_nest_level = 0; /* Nesting level for manual VACUUM statements */
+static bool	pgds_analyze_pending = false;	/* true after "analyzing" INFO, waiting for stats line */
+static char	pgds_analyze_schemaname[NAMEDATALEN];	/* schema parsed from "analyzing" line */
+static char	pgds_analyze_relname[NAMEDATALEN];		/* relname parsed from "analyzing" line */
 static int	pgds_max_actions;		/* max # actions to track */
 static bool	pgds_enabled;		/* enable/disable log capture at runtime */
 static bool	pgds_vacuum_force_verbose;	/* force VERBOSE on manual VACUUMs */
@@ -1319,6 +1320,14 @@ pgds_log_autoanalyze(ErrorData *edata)
 	PgdsAutoanalyzeEntry *e;
 
 	pgds_parse_table_from_message(edata->message, schemaname, relname);
+	if (schemaname[0] == '\0' && pgds_analyze_schemaname[0] != '\0')
+	{
+		strlcpy(schemaname, pgds_analyze_schemaname, NAMEDATALEN);
+	}
+	if (relname[0] == '\0' && pgds_analyze_relname[0] != '\0') {
+		strlcpy(relname, pgds_analyze_relname, NAMEDATALEN);
+	}
+
 	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
 	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
 
@@ -1527,11 +1536,38 @@ pgds_emit_log(ErrorData *edata)
 	if (!pgds_enabled)
 		return;
 
-	/* Only interested in LOG-level messages going to the server log */
-	if (edata->elevel != LOG || !edata->output_to_server)
+	if (edata->message == NULL)
 		return;
 
-	if (edata->message == NULL)
+	/* Manual VACUUM/ANALYZE: capture INFO messages */
+	if (pgds_vacuum_nest_level > 0 && edata->elevel == INFO)
+	{
+		if (strstr(edata->message, "finished vacuuming") != NULL)
+		{
+			if (pgds_autovacuum != NULL)
+				pgds_log_autovacuum(edata);
+		}
+		else if (strstr(edata->message, "analyzing ") != NULL)
+		{
+			pgds_parse_table_from_analyzing(edata->message,
+											pgds_analyze_schemaname,
+											pgds_analyze_relname);
+			pgds_analyze_pending = true;
+		}
+		else if (pgds_analyze_pending)
+		{
+			/* Second INFO line: the per-table stats summary */
+			if (pgds_autoanalyze != NULL)
+				pgds_log_autoanalyze(edata);
+			pgds_analyze_pending = false;
+			pgds_analyze_schemaname[0] = '\0';
+			pgds_analyze_relname[0] = '\0';
+		}
+		return;
+	}
+
+	/* Only interested in LOG-level messages going to the server log */
+	if (edata->elevel != LOG || !edata->output_to_server)
 		return;
 
 	if (edata->message_id != NULL)
@@ -1579,8 +1615,9 @@ pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
 					 DestReceiver *dest, QueryCompletion *qc)
 {
 	bool		is_vacuum;
+	int			saved_log_min_messages;
 
-	is_vacuum = IsA(pstmt->utilityStmt, VacuumStmt);
+	is_vacuum = !readOnlyTree && IsA(pstmt->utilityStmt, VacuumStmt);
 
 	if (is_vacuum && pgds_enabled && pgds_vacuum_force_verbose)
 	{
@@ -1600,7 +1637,18 @@ pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
 	}
 
 	if (is_vacuum)
+	{
 		pgds_vacuum_nest_level++;
+
+		/*
+		 * INFO messages from VACUUM/ANALYZE VERBOSE only have output_to_server
+		 * set when log_min_messages <= INFO.  Lower it temporarily so that
+		 * emit_log_hook fires for those messages.
+		 */
+		saved_log_min_messages = log_min_messages;
+		if (pgds_enabled)
+			log_min_messages = Min(log_min_messages, INFO);
+	}
 
 	PG_TRY();
 	{
@@ -1614,13 +1662,25 @@ pgds_process_utility(PlannedStmt *pstmt, const char *queryString,
 	PG_CATCH();
 	{
 		if (is_vacuum)
+		{
 			pgds_vacuum_nest_level--;
+			log_min_messages = saved_log_min_messages;
+			pgds_analyze_pending = false;
+			pgds_analyze_schemaname[0] = '\0';
+			pgds_analyze_relname[0] = '\0';
+		}
 		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
 	if (is_vacuum)
+	{
 		pgds_vacuum_nest_level--;
+		log_min_messages = saved_log_min_messages;
+		pgds_analyze_pending = false;
+		pgds_analyze_schemaname[0] = '\0';
+		pgds_analyze_relname[0] = '\0';
+	}
 }
 
 
