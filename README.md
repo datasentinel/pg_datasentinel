@@ -73,6 +73,8 @@ log_temp_files = 0                # log every temporary file creation
 |---|---|---|---|---|
 | `pg_datasentinel.enabled` | `bool` | `on` | `superuser` | Enable or disable log message capture at runtime. When `off`, the hook returns immediately without writing to any ring buffer. |
 | `pg_datasentinel.max` | `int` | `5000` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files, checkpoints, XID snapshots). When full, the oldest entry is overwritten. Requires a server restart. |
+| `pg_datasentinel.maintenance_force_verbose` | `bool` | `off` | `superuser` | When `on`, automatically adds `VERBOSE` to every manual `VACUUM` and `ANALYZE` command so that their output is captured in the ring buffers alongside autovacuum/autoanalyze entries. |
+| `pg_datasentinel.ignore_system_schemas` | `bool` | `on` | `superuser` | When `on`, silently skips vacuum and analyze log entries for `pg_catalog` and `information_schema`. Reduces noise in the ring buffers from system-table maintenance. |
 
 ---
 
@@ -242,30 +244,32 @@ Snapshots are taken automatically at each checkpoint, but no more than once per 
 
 | Column | Type | Description |
 |---|---|---|
-| `snapshot_count` | `int4` | Number of XID/MXID snapshots stored. |
-| `snapshot_span` | `interval` | Time elapsed between the oldest and newest snapshot (`NULL` if fewer than 2 snapshots). |
+| `eta_aggressive_vacuum_fmt` | `text` | Human-readable ETA until aggressive vacuuming begins (e.g. `"2d 3h 15m 0s"`). `NULL` if rate is unknown. |
+| `eta_wraparound_fmt` | `text` | Human-readable ETA until wraparound risk. `NULL` if rate is unknown. |
+| `datname` | `text` | Database name closest to the wraparound limit (whichever of XID or MXID is nearer). |
 | `txid_rate_per_sec` | `float8` | Estimated transaction rate in XIDs/second. `NULL` if fewer than 2 snapshots. |
-| `current_xid` | `int8` | Current next full transaction ID (epoch-aware). Live. |
+| `mxid_rate_per_sec` | `float8` | Estimated multixact consumption rate in MXIDs/second. `NULL` if fewer than 2 snapshots. |
+| `snapshot_count` | `int4` | Number of XID/MXID snapshots stored. |
+| `oldest_snapshot_at` | `timestamptz` | Timestamp of the oldest stored snapshot. |
+| `newest_snapshot_at` | `timestamptz` | Timestamp of the most recent stored snapshot. |
+| `snapshot_interval` | `text` | Human-readable time span between the oldest and newest snapshot. `NULL` if fewer than 2 snapshots. |
 | `xids_to_aggressive_vacuum` | `int8` | XIDs remaining before autovacuum starts aggressive freezing. Live. |
 | `xids_to_wraparound` | `int8` | XIDs remaining before XID wraparound. Live. |
-| `mxid_rate_per_sec` | `float8` | Estimated multixact consumption rate in MXIDs/second. `NULL` if fewer than 2 snapshots. |
-| `current_mxid` | `int8` | Current next multixact ID. Live. |
 | `mxids_to_aggressive_vacuum` | `int8` | MXIDs remaining before autovacuum starts aggressive MXID freezing. Live. |
 | `mxids_to_wraparound` | `int8` | MXIDs remaining before MXID wraparound. Live. |
-| `oldest_xid_database` | `text` | Database with the oldest frozen XID. Live. |
-| `oldest_mxid_database` | `text` | Database with the oldest frozen MXID (catalog scan for minimum `datminmxid`). |
-| `eta_aggressive_vacuum` | `interval` | Estimated time until aggressive vacuuming begins — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
-| `eta_wraparound` | `interval` | Estimated time until wraparound risk — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
+| `eta_aggressive_vacuum` | `interval` | Raw interval ETA until aggressive vacuuming begins — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
+| `eta_wraparound` | `interval` | Raw interval ETA until wraparound risk — minimum of XID and MXID ETAs. `NULL` if rate is unknown. |
 
 ```sql
 -- Current wraparound risk at a glance
 SELECT
+    eta_aggressive_vacuum_fmt,
+    eta_wraparound_fmt,
+    datname,
     snapshot_count,
-    snapshot_span,
-    current_xid, xids_to_aggressive_vacuum, xids_to_wraparound,
-    current_mxid, mxids_to_aggressive_vacuum, mxids_to_wraparound,
-    eta_aggressive_vacuum,
-    eta_wraparound
+    snapshot_interval,
+    xids_to_aggressive_vacuum, xids_to_wraparound,
+    mxids_to_aggressive_vacuum, mxids_to_wraparound
 FROM ds_wraparound_risk;
 ```
 
@@ -380,6 +384,12 @@ shared_preload_libraries = 'pg_datasentinel'
 log_autovacuum_min_duration = 0
 autovacuum_naptime = 1s
 ```
+
+The regression test sequence is: `init`, `vacuum`, `analyze`, `tempfiles`, `checkpoints`, `wraparound`, `manualanalyze`, `excludeInternalSchemas`.
+
+- `manualanalyze` — tests manual `ANALYZE VERBOSE` capture and the `maintenance_force_verbose` GUC.
+- `excludeInternalSchemas` — tests that `ignore_system_schemas = on` suppresses `pg_catalog` entries from the ring buffers.
+
 ### Unit tests for internal parsing functions
 
 A companion test module exercises the C-level message-parsing functions (`pgds_parse_table_from_message`, `pgds_parse_vacuum_stats`, `pgds_parse_cpu_stats`) without requiring a live PostgreSQL cluster:
@@ -402,9 +412,10 @@ shared_preload_libraries
         |
         +-- pg_datasentinel.enabled  (GUC, runtime toggle)
         +-- pg_datasentinel.max      (GUC, ring buffer capacity)
-        +-- shmem_request_hook  -> allocate 5 ring buffers in shared memory
-        +-- shmem_startup_hook  -> initialise ring buffer headers + LWLocks
-        +-- emit_log_hook       -> intercept LOG messages
+        +-- shmem_request_hook      -> allocate 5 ring buffers in shared memory
+        +-- shmem_startup_hook      -> initialise ring buffer headers + LWLocks
+        +-- emit_log_hook           -> intercept LOG messages
+        +-- ProcessUtility_hook     -> intercept manual VACUUM/ANALYZE
                                       |
              +------------------------+------------------------+----------+
              |                        |                        |          |
