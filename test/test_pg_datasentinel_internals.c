@@ -337,7 +337,7 @@ test_pgds_parse_cpu_stats(PG_FUNCTION_ARGS)
 	initStringInfo(&buf);
 
 	/*
-	 * Test 1: full autovacuum message — real pgbench example.
+	 * Test 1: full vacuum message — real pgbench example.
 	 * All three fields must be parsed correctly from the system usage line.
 	 */
 	{
