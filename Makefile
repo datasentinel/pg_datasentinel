@@ -11,7 +11,7 @@ endif
 
 DATA = pg_datasentinel--0.1.0.sql
 
-REGRESS = init autovacuum autoanalyze tempfiles checkpoints wraparound manualanalyze excludeInternalSchemas
+REGRESS = init vacuum analyze tempfiles checkpoints wraparound manualanalyze excludeInternalSchemas
 REGRESS_OPTS = --temp-config=regress.conf
 USE_PGXS = 1
 

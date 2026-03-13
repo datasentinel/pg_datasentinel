@@ -1,10 +1,10 @@
 DROP EXTENSION IF EXISTS pg_datasentinel;
 NOTICE:  extension "pg_datasentinel" does not exist, skipping
 CREATE EXTENSION pg_datasentinel;
--- Verify the autovacuum view is queryable
-SELECT count(*) >= 0 AS autovacuum_view_ok FROM ds_autovacuum_activity;
- autovacuum_view_ok 
---------------------
+-- Verify the vacuum view is queryable
+SELECT count(*) >= 0 AS vacuum_view_ok FROM ds_vacuum_activity;
+ vacuum_view_ok 
+----------------
  t
 (1 row)
 
@@ -15,9 +15,9 @@ SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activity;
  t
 (1 row)
 
-select ds_autovacuum_activity_reset();
- ds_autovacuum_activity_reset 
-------------------------------
+select ds_vacuum_activity_reset();
+ ds_vacuum_activity_reset 
+--------------------------
  
 (1 row)
 

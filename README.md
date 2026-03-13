@@ -9,8 +9,8 @@ It must be loaded via `shared_preload_libraries` and works on Linux.
 ## Features
 
 - **Enhanced activity view** — extends `pg_stat_activity` with real-time memory usage, live temporary file bytes, and (PostgreSQL 18+) the current plan ID for each backend.
-- **Autovacuum history** — captures every autovacuum LOG message in a shared-memory ring buffer and parses page/tuple counters, CPU timings, and whether the run was an aggressive wraparound-prevention vacuum.
-- **Autoanalyze history** — same for autoanalyze messages, with sample block and extended-statistics counters.
+- **Vacuum history** — captures autovacuum LOG messages and manual VACUUM INFO messages in a shared-memory ring buffer; parses page/tuple counters, CPU timings, whether the run was aggressive, and whether it was triggered manually.
+- **Analyze history** — captures autoanalyze LOG messages and manual ANALYZE INFO messages in a shared-memory ring buffer; parses sample block and extended-statistics counters, and whether the run was triggered automatically.
 - **Temporary file history** — captures every `log_temp_files` LOG message with file size and role information.
 - **Checkpoint history** — captures every checkpoint and restartpoint completion with detailed I/O and sync timings.
 - **Wraparound risk estimation** — samples XID and MXID at each checkpoint (at most once per hour) and provides a single-row view with live distances to the aggressive-vacuum and wraparound limits for both XID and MXID, plus rate-based ETAs that reflect whichever counter is closer to danger.
@@ -107,9 +107,9 @@ WHERE state = 'active';
 
 ---
 
-### `ds_autovacuum_activity`
+### `ds_vacuum_activity`
 
-A ring buffer of the last `pg_datasentinel.max` autovacuum LOG messages. The message text is parsed to extract structured counters.
+A ring buffer of the last `pg_datasentinel.max` vacuum messages (both autovacuum LOG messages and manual VACUUM INFO messages). The message text is parsed to extract structured counters.
 
 | Column | Type | Description |
 |---|---|---|
@@ -129,22 +129,23 @@ A ring buffer of the last `pg_datasentinel.max` autovacuum LOG messages. The mes
 | `sys_cpu` | `float8` | System CPU time in seconds. |
 | `elapsed` | `float8` | Elapsed wall-clock time in seconds. |
 | `aggressive` | `bool` | `true` if this was an aggressive vacuum to prevent wraparound (`automatic aggressive vacuum`). |
-| `message` | `text` | Full raw LOG message text. |
+| `is_automatic` | `bool` | `true` if triggered by autovacuum; `false` if triggered by a manual `VACUUM` command. |
+| `message` | `text` | Full raw log message text. |
 
 ```sql
--- Recent autovacuum runs, slowest first
-SELECT logged_at, schemaname, relname, elapsed, tuples_removed, aggressive
-FROM ds_autovacuum_activity
+-- Recent vacuum runs, slowest first
+SELECT logged_at, schemaname, relname, elapsed, tuples_removed, aggressive, is_automatic
+FROM ds_vacuum_activity
 ORDER BY elapsed DESC;
 
-SELECT ds_autovacuum_activity_reset();
+SELECT ds_vacuum_activity_reset();
 ```
 
 ---
 
-### `ds_autoanalyze_activity`
+### `ds_analyze_activity`
 
-A ring buffer of the last `pg_datasentinel.max` autoanalyze LOG messages.
+A ring buffer of the last `pg_datasentinel.max` analyze messages (both autoanalyze LOG messages and manual ANALYZE INFO messages).
 
 | Column | Type | Description |
 |---|---|---|
@@ -160,15 +161,16 @@ A ring buffer of the last `pg_datasentinel.max` autoanalyze LOG messages.
 | `user_cpu` | `float8` | User CPU time in seconds. |
 | `sys_cpu` | `float8` | System CPU time in seconds. |
 | `elapsed` | `float8` | Elapsed wall-clock time in seconds. |
-| `message` | `text` | Full raw LOG message text. |
+| `is_automatic` | `bool` | `true` if triggered by autoanalyze; `false` if triggered by a manual `ANALYZE` command. |
+| `message` | `text` | Full raw log message text. |
 
 ```sql
-SELECT logged_at, schemaname, relname, elapsed
-FROM ds_autoanalyze_activity
+SELECT logged_at, schemaname, relname, elapsed, is_automatic
+FROM ds_analyze_activity
 ORDER BY logged_at DESC
 LIMIT 20;
 
-SELECT ds_autoanalyze_activity_reset();
+SELECT ds_analyze_activity_reset();
 ```
 
 ---
@@ -315,12 +317,12 @@ Always returns exactly **one row** with a three-column summary (count, oldest, l
 
 | Column | Type | Description |
 |---|---|---|
-| `autovacuum_count` | `int4` | Number of autovacuum entries currently in the buffer. |
-| `autovacuum_oldest` | `timestamptz` | Timestamp of the oldest captured autovacuum. `NULL` if the buffer is empty. |
-| `autovacuum_latest` | `timestamptz` | Timestamp of the most recent captured autovacuum. |
-| `autoanalyze_count` | `int4` | Number of autoanalyze entries in the buffer. |
-| `autoanalyze_oldest` | `timestamptz` | Timestamp of the oldest captured autoanalyze. |
-| `autoanalyze_latest` | `timestamptz` | Timestamp of the most recent captured autoanalyze. |
+| `vacuum_count` | `int4` | Number of vacuum entries currently in the buffer. |
+| `vacuum_oldest` | `timestamptz` | Timestamp of the oldest captured vacuum. `NULL` if the buffer is empty. |
+| `vacuum_latest` | `timestamptz` | Timestamp of the most recent captured vacuum. |
+| `analyze_count` | `int4` | Number of analyze entries in the buffer. |
+| `analyze_oldest` | `timestamptz` | Timestamp of the oldest captured analyze. |
+| `analyze_latest` | `timestamptz` | Timestamp of the most recent captured analyze. |
 | `checkpoint_count` | `int4` | Number of checkpoint entries in the buffer. |
 | `checkpoint_oldest` | `timestamptz` | Timestamp of the oldest captured checkpoint. |
 | `checkpoint_latest` | `timestamptz` | Timestamp of the most recent captured checkpoint. |
@@ -338,8 +340,8 @@ SELECT * FROM ds_activity_summary;
 
 | Function | Description |
 |---|---|
-| `ds_autovacuum_activity_reset()` | Clear the autovacuum ring buffer. |
-| `ds_autoanalyze_activity_reset()` | Clear the autoanalyze ring buffer. |
+| `ds_vacuum_activity_reset()` | Clear the vacuum ring buffer. |
+| `ds_analyze_activity_reset()` | Clear the analyze ring buffer. |
 | `ds_tempfile_activity_reset()` | Clear the temporary-file ring buffer. |
 | `ds_checkpoint_activity_reset()` | Clear the checkpoint ring buffer. |
 | `ds_activity_reset_all()` | Clear all ring buffers at once (autovacuum, autoanalyze, temp files, checkpoints, XID snapshots). |
