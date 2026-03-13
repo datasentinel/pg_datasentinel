@@ -1272,6 +1272,9 @@ pgds_log_vacuum(ErrorData *edata, bool is_automatic)
 	if (schemaname[0] == '\0')
 		pgds_parse_table_from_vacuuming(edata->message, schemaname, relname);
 
+	if (schemaname[0] == '\0' && relname[0] == '\0')
+		return;
+
 	if (pgds_ignore_system_schemas &&
 		(strcmp(schemaname, "pg_catalog") == 0 ||
 		 strcmp(schemaname, "information_schema") == 0))
@@ -1345,6 +1348,9 @@ pgds_log_analyze(ErrorData *edata, bool is_automatic)
 	{
 		strlcpy(relname, pgds_analyze_relname, NAMEDATALEN);
 	}
+
+	if (schemaname[0] == '\0' && relname[0] == '\0')
+		return;
 
 	if (pgds_ignore_system_schemas &&
 		(strcmp(schemaname, "pg_catalog") == 0 ||
