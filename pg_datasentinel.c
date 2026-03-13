@@ -32,6 +32,7 @@
 
 PG_MODULE_MAGIC;
 
+static bool pgds_in_emit_log = false;
 
 void		_PG_init(void);
 void		_PG_fini(void);
@@ -238,6 +239,7 @@ static Size pgds_checkpoint_memsize(void);
 static Size pgds_xid_snapshot_memsize(void);
 static void pgds_shmem_request(void);
 static void pgds_shmem_startup(void);
+static void pgds_emit_log_process(ErrorData *edata);
 static void pgds_emit_log(ErrorData *edata);
 static void pgds_log_vacuum(ErrorData *edata, bool is_automatic);
 static void pgds_log_analyze(ErrorData *edata, bool is_automatic);
@@ -1543,25 +1545,9 @@ pgds_log_xid_snapshot(void)
 	LWLockRelease(pgds_xid_snapshot->lock);
 }
 
-/*
- * emit_log_hook: intercepts every log message emitted by the backend.
- * Routes vacuum messages to pgds_vacuum, analyze messages to
- * pgds_analyze, and temporary-file messages to pgds_tempfile.
- */
 static void
-pgds_emit_log(ErrorData *edata)
+pgds_emit_log_process(ErrorData *edata)
 {
-	/* Always chain to any previously installed hook */
-	if (prev_emit_log_hook)
-		prev_emit_log_hook(edata);
-
-	/* Skip all capture when disabled */
-	if (!pgds_enabled)
-		return;
-
-	if (edata->message == NULL)
-		return;
-
 	/* Manual VACUUM/ANALYZE: capture INFO messages */
 	if (pgds_vacuum_nest_level > 0 && edata->elevel == INFO)
 	{
@@ -1640,6 +1626,53 @@ pgds_emit_log(ErrorData *edata)
 		if (pgds_analyze != NULL)
 			pgds_log_analyze(edata, true);
 	}
+}
+
+/*
+ * emit_log_hook: intercepts every log message emitted by the backend.
+ * Routes vacuum messages to pgds_vacuum, analyze messages to
+ * pgds_analyze, and temporary-file messages to pgds_tempfile.
+ */
+static void
+pgds_emit_log(ErrorData *edata)
+{
+	ErrorData  *errdata;
+
+	/* Always chain to any previously installed hook */
+	if (prev_emit_log_hook)
+		prev_emit_log_hook(edata);
+
+	/* Avoid recursion if we log from within this hook */
+	if (pgds_in_emit_log)
+		return;
+
+	if (edata->elevel != LOG && edata->elevel != INFO)
+		return;
+
+	/* Skip all capture when disabled */
+	if (!pgds_enabled)
+		return;
+
+	if (edata->message == NULL)
+		return;
+
+	pgds_in_emit_log = true;
+	PG_TRY();
+	{
+		pgds_emit_log_process(edata);
+	}
+	PG_CATCH();
+	{
+		errdata = CopyErrorData();
+		FlushErrorState();
+		ereport(LOG,
+				(errmsg("pg_datasentinel: error in emit_log: %s",
+						errdata->message)));
+		FreeErrorData(errdata);
+		/* Do not re-throw: isolate extension failures from backend work */
+	}
+	PG_END_TRY();
+	pgds_in_emit_log = false;
 }
 
 
