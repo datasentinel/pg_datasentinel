@@ -32,6 +32,7 @@
 
 PG_MODULE_MAGIC;
 
+static bool pgds_in_emit_log = false;
 
 void		_PG_init(void);
 void		_PG_fini(void);
@@ -1641,9 +1642,13 @@ pgds_emit_log(ErrorData *edata)
 	if (prev_emit_log_hook)
 		prev_emit_log_hook(edata);
 
+	/* Avoid recursion if we log from within this hook */
+	if (pgds_in_emit_log)
+		return;
+
 	if (edata->elevel != LOG && edata->elevel != INFO)
 		return;
-	
+
 	/* Skip all capture when disabled */
 	if (!pgds_enabled)
 		return;
@@ -1651,6 +1656,7 @@ pgds_emit_log(ErrorData *edata)
 	if (edata->message == NULL)
 		return;
 
+	pgds_in_emit_log = true;
 	PG_TRY();
 	{
 		pgds_emit_log_process(edata);
@@ -1658,11 +1664,15 @@ pgds_emit_log(ErrorData *edata)
 	PG_CATCH();
 	{
 		errdata = CopyErrorData();
-		elog(ERROR, "pg_datasentinel: error in emit_log: %s", errdata->message);
+		FlushErrorState();
+		ereport(LOG,
+				(errmsg("pg_datasentinel: error in emit_log: %s",
+						errdata->message)));
 		FreeErrorData(errdata);
-		PG_RE_THROW();
+		/* Do not re-throw: isolate extension failures from backend work */
 	}
 	PG_END_TRY();
+	pgds_in_emit_log = false;
 }
 
 
