@@ -1641,6 +1641,9 @@ pgds_emit_log(ErrorData *edata)
 	if (prev_emit_log_hook)
 		prev_emit_log_hook(edata);
 
+	if (edata->elevel != LOG && edata->elevel != INFO)
+		return;
+	
 	/* Skip all capture when disabled */
 	if (!pgds_enabled)
 		return;
@@ -1655,7 +1658,7 @@ pgds_emit_log(ErrorData *edata)
 	PG_CATCH();
 	{
 		errdata = CopyErrorData();
-		elog(LOG, "pg_datasentinel: error in emit_log: %s", errdata->message);
+		elog(ERROR, "pg_datasentinel: error in emit_log: %s", errdata->message);
 		FreeErrorData(errdata);
 		PG_RE_THROW();
 	}
