@@ -1,6 +1,6 @@
 -- Setup
 SELECT ds_analyze_activity_reset();
- ds_analyze_activity_reset
+ ds_analyze_activity_reset 
 ---------------------------
  
 (1 row)
@@ -31,7 +31,7 @@ WHERE message ~* 'test_mv';
 (1 row)
 
 SELECT ds_analyze_activity_reset();
- ds_analyze_activity_reset
+ ds_analyze_activity_reset 
 ---------------------------
  
 (1 row)
@@ -51,7 +51,7 @@ WHERE message ~* 'test_mv';
 (1 row)
 
 SELECT ds_analyze_activity_reset();
- ds_analyze_activity_reset
+ ds_analyze_activity_reset 
 ---------------------------
  
 (1 row)

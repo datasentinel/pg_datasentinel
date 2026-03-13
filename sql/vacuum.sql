@@ -10,15 +10,21 @@ SELECT
     count(relname       IS NOT NULL) AS has_relname,
     count(relid         IS NOT NULL) AS has_relid,
     count(aggressive    IS NOT NULL) AS has_aggressive,
+    count(is_automatic     IS NOT NULL) AS has_is_automatic,
     count(message       IS NOT NULL) AS has_message
-FROM ds_autovacuum_activity where message ~* 'test_av';
+FROM ds_vacuum_activity where message ~* 'test_av';
 
 -- A normal autovacuum should not be flagged as aggressive
 SELECT bool_and(aggressive = false) AS not_aggressive
-FROM ds_autovacuum_activity
+FROM ds_vacuum_activity
 WHERE message ~* 'test_av';
 
-select ds_autovacuum_activity_reset();
+-- Autovacuum entries should be flagged as automatic
+SELECT bool_and(is_automatic = true) AS all_automatic
+FROM ds_vacuum_activity
+WHERE message ~* 'test_av';
 
-select count(*) from ds_autovacuum_activity where message ~* 'test_av';
+select ds_vacuum_activity_reset();
+
+select count(*) from ds_vacuum_activity where message ~* 'test_av';
 

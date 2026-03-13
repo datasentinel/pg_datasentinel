@@ -15,7 +15,7 @@ CREATE VIEW ds_stat_activity AS
     WHERE s.pid = ds.pid;
 
 
-CREATE FUNCTION ds_autovacuum_msgs(
+CREATE FUNCTION ds_vacuum_msgs(
     OUT seq                  int4,
     OUT logged_at            timestamptz,
     OUT datname              text,
@@ -32,22 +32,23 @@ CREATE FUNCTION ds_autovacuum_msgs(
     OUT sys_cpu              float8,
     OUT elapsed              float8,
     OUT aggressive           bool,
+    OUT is_automatic         bool,
     OUT message              text
 )
 RETURNS SETOF record
 AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
-CREATE VIEW ds_autovacuum_activity AS
-    SELECT * FROM ds_autovacuum_msgs();
+CREATE VIEW ds_vacuum_activity AS
+    SELECT * FROM ds_vacuum_msgs();
 
-CREATE FUNCTION ds_autovacuum_activity_reset()
+CREATE FUNCTION ds_vacuum_activity_reset()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
 
 
-CREATE FUNCTION ds_autoanalyze_msgs(
+CREATE FUNCTION ds_analyze_msgs(
     OUT seq                        int4,
     OUT logged_at                  timestamptz,
     OUT datname                    text,
@@ -60,16 +61,17 @@ CREATE FUNCTION ds_autoanalyze_msgs(
     OUT user_cpu                   float8,
     OUT sys_cpu                    float8,
     OUT elapsed                    float8,
+    OUT is_automatic               bool,
     OUT message                    text
 )
 RETURNS SETOF record
 AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
-CREATE VIEW ds_autoanalyze_activity AS
-    SELECT * FROM ds_autoanalyze_msgs();
+CREATE VIEW ds_analyze_activity AS
+    SELECT * FROM ds_analyze_msgs();
 
-CREATE FUNCTION ds_autoanalyze_activity_reset()
+CREATE FUNCTION ds_analyze_activity_reset()
 RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
@@ -155,16 +157,16 @@ LANGUAGE C PARALLEL SAFE;
 CREATE VIEW ds_activity_summary AS
 WITH
     av AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
-           FROM ds_autovacuum_activity),
+           FROM ds_vacuum_activity),
     aa AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
-           FROM ds_autoanalyze_activity),
+           FROM ds_analyze_activity),
     cp AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
            FROM ds_checkpoint_activity),
     tf AS (SELECT count(*) AS cnt, min(logged_at) AS oldest, max(logged_at) AS latest
            FROM ds_tempfile_activity)
 SELECT
-    av.cnt::int4  AS autovacuum_count,   av.oldest AS autovacuum_oldest,   av.latest AS autovacuum_latest,
-    aa.cnt::int4  AS autoanalyze_count,  aa.oldest AS autoanalyze_oldest,  aa.latest AS autoanalyze_latest,
+    av.cnt::int4  AS vacuum_count,        av.oldest AS vacuum_oldest,        av.latest AS vacuum_latest,
+    aa.cnt::int4  AS analyze_count,       aa.oldest AS analyze_oldest,       aa.latest AS analyze_latest,
     cp.cnt::int4  AS checkpoint_count,   cp.oldest AS checkpoint_oldest,   cp.latest AS checkpoint_latest,
     tf.cnt::int4  AS tempfile_count,     tf.oldest AS tempfile_oldest,     tf.latest AS tempfile_latest
 FROM av, aa, cp, tf;
@@ -282,10 +284,10 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION
     ds_stat_pids(),
-    ds_autovacuum_msgs(),
-    ds_autovacuum_activity_reset(),
-    ds_autoanalyze_msgs(),
-    ds_autoanalyze_activity_reset(),
+    ds_vacuum_msgs(),
+    ds_vacuum_activity_reset(),
+    ds_analyze_msgs(),
+    ds_analyze_activity_reset(),
     ds_tempfile_msgs(),
     ds_tempfile_activity_reset(),
     ds_container_resource_info(),
@@ -298,8 +300,8 @@ FROM PUBLIC;
 
 GRANT EXECUTE ON FUNCTION
     ds_stat_pids(),
-    ds_autovacuum_msgs(),
-    ds_autoanalyze_msgs(),
+    ds_vacuum_msgs(),
+    ds_analyze_msgs(),
     ds_tempfile_msgs(),
     ds_container_resource_info(),
     ds_checkpoint_msgs(),
@@ -309,8 +311,8 @@ TO ds_reader;
 
 GRANT SELECT ON
     ds_stat_activity,
-    ds_autovacuum_activity,
-    ds_autoanalyze_activity,
+    ds_vacuum_activity,
+    ds_analyze_activity,
     ds_tempfile_activity,
     ds_container_resources,
     ds_checkpoint_activity,

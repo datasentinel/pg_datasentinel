@@ -1,0 +1,29 @@
+diff -U3 /soft/projects/pg_datasentinel/expected/manualanalyze.out /soft/projects/pg_datasentinel/results/manualanalyze.out
+--- /soft/projects/pg_datasentinel/expected/manualanalyze.out	2026-03-13 13:18:55.427985993 +0100
++++ /soft/projects/pg_datasentinel/results/manualanalyze.out	2026-03-13 13:23:56.399185494 +0100
+@@ -1,6 +1,6 @@
+ -- Setup
+ SELECT ds_analyze_activity_reset();
+- ds_analyze_activity_reset
++ ds_analyze_activity_reset 
+ ---------------------------
+  
+ (1 row)
+@@ -31,7 +31,7 @@
+ (1 row)
+ 
+ SELECT ds_analyze_activity_reset();
+- ds_analyze_activity_reset
++ ds_analyze_activity_reset 
+ ---------------------------
+  
+ (1 row)
+@@ -51,7 +51,7 @@
+ (1 row)
+ 
+ SELECT ds_analyze_activity_reset();
+- ds_analyze_activity_reset
++ ds_analyze_activity_reset 
+ ---------------------------
+  
+ (1 row)
