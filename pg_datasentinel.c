@@ -257,6 +257,7 @@ static char	pgds_analyze_relname[NAMEDATALEN];		/* relname parsed from "analyzin
 static int	pgds_max_actions;		/* max # actions to track */
 static bool	pgds_enabled;		/* enable/disable log capture at runtime */
 static bool	pgds_maintenance_force_verbose; /* force VERBOSE on manual VACUUM/ANALYZE */
+static bool	pgds_ignore_system_schemas; /* skip pg_catalog and information_schema entries */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_vacuum_msgs);
@@ -1268,6 +1269,12 @@ pgds_log_vacuum(ErrorData *edata, bool is_automatic)
 	pgds_parse_table_from_message(edata->message, schemaname, relname);
 	if (schemaname[0] == '\0')
 		pgds_parse_table_from_vacuuming(edata->message, schemaname, relname);
+
+	if (pgds_ignore_system_schemas &&
+		(strcmp(schemaname, "pg_catalog") == 0 ||
+		 strcmp(schemaname, "information_schema") == 0))
+		return;
+
 	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
 	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
 
@@ -1336,6 +1343,11 @@ pgds_log_analyze(ErrorData *edata, bool is_automatic)
 	{
 		strlcpy(relname, pgds_analyze_relname, NAMEDATALEN);
 	}
+
+	if (pgds_ignore_system_schemas &&
+		(strcmp(schemaname, "pg_catalog") == 0 ||
+		 strcmp(schemaname, "information_schema") == 0))
+		return;
 
 	nsoid  = get_namespace_oid(schemaname, true /* missing_ok */);
 	reloid = (nsoid != InvalidOid) ? get_relname_relid(relname, nsoid) : InvalidOid;
@@ -1740,6 +1752,17 @@ _PG_init(void)
 							 NULL,
 							 &pgds_maintenance_force_verbose,
 							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomBoolVariable("pg_datasentinel.ignore_system_schemas",
+							 "Skips vacuum and analyze log entries for pg_catalog and information_schema.",
+							 NULL,
+							 &pgds_ignore_system_schemas,
+							 true,
 							 PGC_SUSET,
 							 0,
 							 NULL,
