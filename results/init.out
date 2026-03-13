@@ -1,0 +1,42 @@
+DROP EXTENSION IF EXISTS pg_datasentinel;
+NOTICE:  extension "pg_datasentinel" does not exist, skipping
+CREATE EXTENSION pg_datasentinel;
+-- Verify the autovacuum view is queryable
+SELECT count(*) >= 0 AS autovacuum_view_ok FROM ds_autovacuum_activity;
+ autovacuum_view_ok 
+--------------------
+ t
+(1 row)
+
+-- Verify the stat activity view is queryable
+SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activity;
+ stat_activity_ok 
+------------------
+ t
+(1 row)
+
+select ds_autovacuum_activity_reset();
+ ds_autovacuum_activity_reset 
+------------------------------
+ 
+(1 row)
+
+show log_autovacuum_min_duration;
+ log_autovacuum_min_duration 
+-----------------------------
+ 0
+(1 row)
+
+show autovacuum_naptime;
+ autovacuum_naptime 
+--------------------
+ 1s
+(1 row)
+
+-- Create a table and trigger autovacuum on it.
+DROP TABLE IF EXISTS test_av;
+NOTICE:  table "test_av" does not exist, skipping
+CREATE TABLE test_av (id int);
+ALTER TABLE test_av SET (autovacuum_vacuum_scale_factor = 0, autovacuum_vacuum_threshold = 0);
+INSERT INTO test_av SELECT generate_series(1, 1000);
+DELETE FROM test_av;
