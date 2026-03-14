@@ -9,7 +9,7 @@ else
 OBJS = pg_datasentinel.o pgds_utils.o
 endif
 
-DATA = pg_datasentinel--0.1.0.sql
+DATA = pg_datasentinel--1.0.0.sql
 
 REGRESS = init vacuum analyze tempfiles checkpoints wraparound manualanalyze excludeInternalSchemas fakelog
 REGRESS_OPTS = --temp-config=regress.conf

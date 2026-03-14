@@ -46,7 +46,7 @@ void		_PG_fini(void);
 #define DS_ANALYZE_COLS			14
 #define DS_TEMPFILE_COLS		7
 #define DS_CHECKPOINT_COLS		16
-#define DS_XID_SNAPSHOT_COLS	5
+#define DS_XID_SNAPSHOT_COLS	7
 #define DS_WRAPAROUND_RISK_COLS	17
 #define DS_CGROUP_COLS	5
 
@@ -200,10 +200,12 @@ typedef struct PgdsCheckpointSharedState
  */
 typedef struct PgdsXidSnapshotEntry
 {
-	TimestampTz	logged_at;		/* wall-clock time of the snapshot */
-	int64		next_xid;		/* U64FromFullTransactionId(ReadNextFullTransactionId()) */
-	int64		next_mxid;		/* (int64) ReadNextMultiXactId() */
-	Oid			oldest_xid_db;	/* TransamVariables->oldestXidDB */
+	TimestampTz	logged_at;			/* wall-clock time of the snapshot */
+	int64		next_xid;			/* U64FromFullTransactionId(ReadNextFullTransactionId()) */
+	int64		next_mxid;			/* (int64) ReadNextMultiXactId() */
+	Oid			oldest_xid_db;		/* TransamVariables->oldestXidDB */
+	double		txid_rate_per_sec;	/* XID consumption rate vs previous entry (XIDs/s), 0 if first */
+	double		mxid_rate_per_sec;	/* MXID consumption rate vs previous entry (MXIDs/s), 0 if first */
 } PgdsXidSnapshotEntry;
 
 /* Shared-memory FIFO ring buffer; lock protects all fields. */
@@ -699,6 +701,14 @@ ds_xid_snapshot_msgs(PG_FUNCTION_ARGS)
 		values[i++] = Int64GetDatum(e->next_mxid);
 		if (OidIsValid(e->oldest_xid_db))
 			values[i++] = ObjectIdGetDatum(e->oldest_xid_db);
+		else
+			nulls[i++] = true;
+		if (e->txid_rate_per_sec > 0)
+			values[i++] = Float8GetDatum(e->txid_rate_per_sec);
+		else
+			nulls[i++] = true;
+		if (e->mxid_rate_per_sec > 0)
+			values[i++] = Float8GetDatum(e->mxid_rate_per_sec);
 		else
 			nulls[i++] = true;
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
@@ -1509,6 +1519,8 @@ pgds_log_xid_snapshot(void)
 {
 	PgdsXidSnapshotEntry *e;
 	TimestampTz	now;
+	int			last_idx;
+	double		elapsed_sec;
 
 	if (pgds_xid_snapshot == NULL)
 		return;
@@ -1518,13 +1530,13 @@ pgds_log_xid_snapshot(void)
 	LWLockAcquire(pgds_xid_snapshot->lock, LW_EXCLUSIVE);
 
 	/* Skip if the last snapshot was taken less than 1 hour ago */
+	last_idx = -1;
 	if (pgds_xid_snapshot->count > 0)
 	{
-		int			last_idx = (pgds_xid_snapshot->tail + pgds_xid_snapshot->max - 1)
-							   % pgds_xid_snapshot->max;
-		TimestampTz	last_at  = pgds_xid_snapshot->entries[last_idx].logged_at;
+		last_idx = (pgds_xid_snapshot->tail + pgds_xid_snapshot->max - 1)
+				   % pgds_xid_snapshot->max;
 
-		if (now - last_at < (int64) 3600 * USECS_PER_SEC)
+		if (now - pgds_xid_snapshot->entries[last_idx].logged_at < (int64) 3600 * USECS_PER_SEC)
 		{
 			LWLockRelease(pgds_xid_snapshot->lock);
 			return;
@@ -1541,6 +1553,30 @@ pgds_log_xid_snapshot(void)
 #else
 	e->oldest_xid_db = ShmemVariableCache->oldestXidDB;
 #endif
+
+	if (last_idx >= 0)
+	{
+		PgdsXidSnapshotEntry *prev = &pgds_xid_snapshot->entries[last_idx];
+
+		elapsed_sec = (double) (e->logged_at - prev->logged_at) / USECS_PER_SEC;
+		if (elapsed_sec > 0)
+		{
+			e->txid_rate_per_sec = (double) (e->next_xid - prev->next_xid) / elapsed_sec;
+			e->mxid_rate_per_sec = (double) (int32) ((uint32) e->next_mxid
+													  - (uint32) prev->next_mxid)
+								   / elapsed_sec;
+		}
+		else
+		{
+			e->txid_rate_per_sec = 0;
+			e->mxid_rate_per_sec = 0;
+		}
+	}
+	else
+	{
+		e->txid_rate_per_sec = 0;
+		e->mxid_rate_per_sec = 0;
+	}
 
 	pgds_xid_snapshot->tail = (pgds_xid_snapshot->tail + 1) % pgds_xid_snapshot->max;
 	if (pgds_xid_snapshot->count < pgds_xid_snapshot->max)
