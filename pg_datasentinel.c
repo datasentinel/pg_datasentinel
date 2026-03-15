@@ -703,11 +703,11 @@ ds_xid_snapshot_msgs(PG_FUNCTION_ARGS)
 			values[i++] = ObjectIdGetDatum(e->oldest_xid_db);
 		else
 			nulls[i++] = true;
-		if (e->txid_rate_per_sec > 0)
+		if (e->txid_rate_per_sec >= 0)
 			values[i++] = Float8GetDatum(e->txid_rate_per_sec);
 		else
 			nulls[i++] = true;
-		if (e->mxid_rate_per_sec > 0)
+		if (e->mxid_rate_per_sec >= 0)
 			values[i++] = Float8GetDatum(e->mxid_rate_per_sec);
 		else
 			nulls[i++] = true;
