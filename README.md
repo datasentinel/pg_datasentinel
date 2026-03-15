@@ -282,9 +282,11 @@ The raw hourly snapshots are available in `ds_xid_snapshots` for trending or ext
 | `next_xid` | `int8` | Next full transaction ID (epoch-aware) at the time of the snapshot. |
 | `next_mxid` | `int8` | Next multixact ID at the time of the snapshot. |
 | `oldest_xid_db` | `oid` | OID of the database holding the oldest frozen XID. |
+| `txid_rate_per_sec` | `float8` | XID consumption rate since the previous snapshot (XIDs/second). `NULL` if this is the first snapshot. |
+| `mxid_rate_per_sec` | `float8` | MXID consumption rate since the previous snapshot (MXIDs/second). `NULL` if this is the first snapshot. |
 
 ```sql
-SELECT seq, logged_at, next_xid, next_mxid, oldest_xid_db
+SELECT seq, logged_at, next_xid, next_mxid, oldest_xid_db, txid_rate_per_sec, mxid_rate_per_sec
 FROM ds_xid_snapshots
 ORDER BY seq;
 ```
@@ -385,10 +387,11 @@ log_autovacuum_min_duration = 0
 autovacuum_naptime = 1s
 ```
 
-The regression test sequence is: `init`, `vacuum`, `analyze`, `tempfiles`, `checkpoints`, `wraparound`, `manualanalyze`, `excludeInternalSchemas`.
+The regression test sequence is: `init`, `vacuum`, `analyze`, `tempfiles`, `checkpoints`, `wraparound`, `manualanalyze`, `excludeInternalSchemas`, `fakelog`.
 
 - `manualanalyze` — tests manual `ANALYZE VERBOSE` capture and the `maintenance_force_verbose` GUC.
 - `excludeInternalSchemas` — tests that `ignore_system_schemas = on` suppresses `pg_catalog` entries from the ring buffers.
+- `fakelog` — tests capture of synthetic log messages injected directly into the ring buffers.
 
 ### Unit tests for internal parsing functions
 

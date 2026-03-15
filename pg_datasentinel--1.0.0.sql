@@ -177,7 +177,9 @@ CREATE FUNCTION ds_xid_snapshot_msgs(
     OUT logged_at         timestamptz,
     OUT next_xid          int8,
     OUT next_mxid         int8,
-    OUT oldest_xid_db     oid
+    OUT oldest_xid_db     oid,
+    OUT txid_rate_per_sec float8,
+    OUT mxid_rate_per_sec float8
 )
 RETURNS SETOF record
 AS 'MODULE_PATHNAME'
