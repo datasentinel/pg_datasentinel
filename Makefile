@@ -11,7 +11,10 @@ endif
 
 DATA = pg_datasentinel--1.0.sql
 
-REGRESS = init vacuum analyze tempfiles checkpoints wraparound manualanalyze excludeInternalSchemas fakelog
+PG_VERSION := $(shell pg_config --version | sed "s/^PostgreSQL //" | sed "s/\.[0-9]*$$//")
+PG_VERSION := $(shell [ "$(PG_VERSION)" -lt 18 ] 2>/dev/null && echo "before_18" || echo "$(PG_VERSION)")
+
+REGRESS = init vacuum analyze tempfiles checkpoints wraparound manualanalyze_$(PG_VERSION) excludeInternalSchemas_$(PG_VERSION) fakelog
 REGRESS_OPTS = --temp-config=regress.conf
 USE_PGXS = 1
 
