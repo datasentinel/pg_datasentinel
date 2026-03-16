@@ -1,4 +1,4 @@
 comment = 'Observability and activity monitoring extension by Datasentinel'
-default_version = '1.0.0'
+default_version = '1.0'
 module_pathname = '$libdir/pg_datasentinel'
 relocatable = false

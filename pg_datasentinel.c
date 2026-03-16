@@ -32,8 +32,6 @@
 
 PG_MODULE_MAGIC;
 
-static bool pgds_in_emit_log = false;
-
 void		_PG_init(void);
 void		_PG_fini(void);
 
@@ -262,6 +260,8 @@ static int	pgds_max_actions;		/* max # actions to track */
 static bool	pgds_enabled;		/* enable/disable log capture at runtime */
 static bool	pgds_maintenance_force_verbose; /* force VERBOSE on manual VACUUM/ANALYZE */
 static bool	pgds_ignore_system_schemas; /* skip pg_catalog and information_schema entries */
+static bool pgds_in_emit_log = false;
+static int  pgds_max_xids_snapshots = 504;	/* max # of XID snapshots to keep in the ring buffer */
 
 PG_FUNCTION_INFO_V1(ds_stat_pids);
 PG_FUNCTION_INFO_V1(ds_vacuum_msgs);
@@ -1090,7 +1090,7 @@ static Size
 pgds_xid_snapshot_memsize(void)
 {
 	return add_size(offsetof(PgdsXidSnapshotSharedState, entries),
-					mul_size(pgds_max_actions, sizeof(PgdsXidSnapshotEntry)));
+					mul_size(pgds_max_xids_snapshots, sizeof(PgdsXidSnapshotEntry)));
 }
 
 /*
@@ -1179,8 +1179,8 @@ pgds_shmem_startup(void)
 		pgds_xid_snapshot->head  = 0;
 		pgds_xid_snapshot->tail  = 0;
 		pgds_xid_snapshot->count = 0;
-		pgds_xid_snapshot->max   = pgds_max_actions;
-		memset(pgds_xid_snapshot->entries, 0, mul_size(pgds_max_actions, sizeof(PgdsXidSnapshotEntry)));
+		pgds_xid_snapshot->max   = pgds_max_xids_snapshots;
+		memset(pgds_xid_snapshot->entries, 0, mul_size(pgds_max_xids_snapshots, sizeof(PgdsXidSnapshotEntry)));
 	}
 
 	LWLockRelease(AddinShmemInitLock);
