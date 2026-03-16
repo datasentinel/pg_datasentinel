@@ -1719,7 +1719,6 @@ pgds_emit_log(ErrorData *edata)
 				(errmsg("pg_datasentinel: error in emit_log: %s",
 						errdata->message)));
 		FreeErrorData(errdata);
-		/* Do not re-throw: isolate extension failures from backend work */
 	}
 	PG_END_TRY();
 	pgds_in_emit_log = false;
