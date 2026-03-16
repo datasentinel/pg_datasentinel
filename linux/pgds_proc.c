@@ -24,14 +24,14 @@ pgds_is_dir_accessible(const char *path)
 	return true;
 }
 
-long
+int64
 pgds_get_temp_file_bytes(int pid)
 {
 	char		fd_path[256];
 	struct dirent *entry;
 	ssize_t		len;
 	DIR		   *dir;
-	long		temporary_size = 0;
+	int64		temporary_size = 0;
 	char		link_target[MAXPGPATH];
 
 	snprintf(fd_path, sizeof(fd_path), "/proc/%d/fd", pid);
@@ -61,8 +61,8 @@ pgds_get_temp_file_bytes(int pid)
 				if (stat(link_target, &stat_buf) == 0)
 				{
 					elog(DEBUG1, "Temp file found: \"%s\" (target: \"%s\"), Size: %ld bytes",
-						 fd_path, link_target, (long) stat_buf.st_size);
-					temporary_size += (long) stat_buf.st_size;
+						 fd_path, link_target, (int64) stat_buf.st_size);
+					temporary_size += (int64) stat_buf.st_size;
 				}
 			}
 		}
@@ -74,10 +74,10 @@ pgds_get_temp_file_bytes(int pid)
 	return temporary_size;
 }
 
-long
+int64
 pgds_get_rss_memory_pages(int pid)
 {
-	long		rss = 0;
+	int64		rss = 0;
 	FILE	   *fp;
 	char		filename[256];
 
@@ -86,12 +86,7 @@ pgds_get_rss_memory_pages(int pid)
 	fp = fopen(filename, "r");
 	if (fp != NULL)
 	{
-		long		size,
-					share,
-					text_pages,
-					lib,
-					data,
-					dt;
+		int64		size, share, text_pages, lib, data,	dt;
 
 		if (fscanf(fp, "%ld %ld %ld %ld %ld %ld %ld", &size, &rss, &share, &text_pages, &lib, &data, &dt) != 7)
 		{
