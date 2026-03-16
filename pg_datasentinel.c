@@ -1435,6 +1435,8 @@ pgds_log_tempfile(ErrorData *edata)
 {
 	PgdsTempfileEntry *e;
 	const char *p;
+	const char *dbname = get_database_name(MyDatabaseId);
+	const char *rolname = GetUserNameFromId(GetUserId(), true);
 
 	LWLockAcquire(pgds_tempfile->lock, LW_EXCLUSIVE);
 
@@ -1442,17 +1444,8 @@ pgds_log_tempfile(ErrorData *edata)
 
 	e->logged_at = GetCurrentTimestamp();
 
-	{
-		const char *dbname = get_database_name(MyDatabaseId);
-
-		strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
-	}
-
-	{
-		const char *rolname = GetUserNameFromId(GetUserId(), true);
-
-		strlcpy(e->username, rolname ? rolname : "", NAMEDATALEN);
-	}
+	strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
+	strlcpy(e->username, rolname ? rolname : "", NAMEDATALEN);
 
 	e->pid = MyProcPid;
 

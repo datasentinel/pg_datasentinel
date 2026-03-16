@@ -60,8 +60,8 @@ pgds_get_temp_file_bytes(int pid)
 
 				if (stat(link_target, &stat_buf) == 0)
 				{
-					elog(DEBUG1, "Temp file found: \"%s\" (target: \"%s\"), Size: %ld bytes",
-						 fd_path, link_target, (int64) stat_buf.st_size);
+					elog(DEBUG1, "Temp file found: \"%s\" (target: \"%s\"), Size: " INT64_FORMAT " bytes",
+						fd_path, link_target, (int64) stat_buf.st_size);
 					temporary_size += (int64) stat_buf.st_size;
 				}
 			}
@@ -70,8 +70,9 @@ pgds_get_temp_file_bytes(int pid)
 
 	closedir(dir);
 
-	elog(DEBUG1, "Total temporary file usage for PID %d: %ld bytes", pid, temporary_size);
-	return temporary_size;
+	elog(DEBUG1, "Total temporary file usage for PID %d: " INT64_FORMAT " bytes",
+    	pid, temporary_size);
+	 	return temporary_size;
 }
 
 int64
