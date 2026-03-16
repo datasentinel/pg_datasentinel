@@ -69,12 +69,12 @@ log_temp_files = 0                # log every temporary file creation
 
 ### GUC parameters
 
-| Parameter | Type | Default | Scope | Description |
-|---|---|---|---|---|
-| `pg_datasentinel.enabled` | `bool` | `on` | `superuser` | Enable or disable log message capture at runtime. When `off`, the hook returns immediately without writing to any ring buffer. |
-| `pg_datasentinel.max` | `int` | `5000` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files, checkpoints, XID snapshots). When full, the oldest entry is overwritten. Requires a server restart. |
-| `pg_datasentinel.maintenance_force_verbose` | `bool` | `off` | `superuser` | When `on`, automatically adds `VERBOSE` to every manual `VACUUM` and `ANALYZE` command so that their output is captured in the ring buffers alongside autovacuum/autoanalyze entries. |
-| `pg_datasentinel.ignore_system_schemas` | `bool` | `on` | `superuser` | When `on`, silently skips vacuum and analyze log entries for `pg_catalog` and `information_schema`. Reduces noise in the ring buffers from system-table maintenance. |
+| Parameter | Type | Default | Min | Max | Scope | Description |
+|---|---|---|---|---|---|---|
+| `pg_datasentinel.enabled` | `bool` | `on` | — | — | `superuser` | Enable or disable log message capture at runtime. When `off`, the hook returns immediately without writing to any ring buffer. |
+| `pg_datasentinel.max_entries` | `int` | `1000` | `100` | `10000` | `postmaster` | Capacity of each ring buffer (autovacuum, autoanalyze, temp files, checkpoints). When full, the oldest entry is overwritten. Requires a server restart. The XID snapshot buffer is fixed at 504 entries (~21 days at one snapshot per hour). |
+| `pg_datasentinel.maintenance_force_verbose` | `bool` | `off` | — | — | `superuser` | When `on`, automatically adds `VERBOSE` to every manual `VACUUM` and `ANALYZE` command so that their output is captured in the ring buffers alongside autovacuum/autoanalyze entries. |
+| `pg_datasentinel.ignore_system_schemas` | `bool` | `on` | — | — | `superuser` | When `on`, silently skips vacuum and analyze log entries for `pg_catalog` and `information_schema`. Reduces noise in the ring buffers from system-table maintenance. |
 
 ---
 
@@ -111,7 +111,7 @@ WHERE state = 'active';
 
 ### `ds_vacuum_activity`
 
-A ring buffer of the last `pg_datasentinel.max` vacuum messages (both autovacuum LOG messages and manual VACUUM INFO messages). The message text is parsed to extract structured counters.
+A ring buffer of the last `pg_datasentinel.max_entries` vacuum messages (both autovacuum LOG messages and manual VACUUM INFO messages). The message text is parsed to extract structured counters.
 
 | Column | Type | Description |
 |---|---|---|
@@ -147,7 +147,7 @@ SELECT ds_vacuum_activity_reset();
 
 ### `ds_analyze_activity`
 
-A ring buffer of the last `pg_datasentinel.max` analyze messages (both autoanalyze LOG messages and manual ANALYZE INFO messages).
+A ring buffer of the last `pg_datasentinel.max_entries` analyze messages (both autoanalyze LOG messages and manual ANALYZE INFO messages).
 
 | Column | Type | Description |
 |---|---|---|
@@ -179,7 +179,7 @@ SELECT ds_analyze_activity_reset();
 
 ### `ds_tempfile_activity`
 
-A ring buffer of the last `pg_datasentinel.max` temporary-file LOG messages (emitted by PostgreSQL when `log_temp_files` is set).
+A ring buffer of the last `pg_datasentinel.max_entries` temporary-file LOG messages (emitted by PostgreSQL when `log_temp_files` is set).
 
 | Column | Type | Description |
 |---|---|---|
@@ -203,7 +203,7 @@ SELECT ds_tempfile_activity_reset();
 
 ### `ds_checkpoint_activity`
 
-A ring buffer of the last `pg_datasentinel.max` checkpoint and restartpoint completions. Metrics are read directly from `CheckpointStats` — no log text parsing required.
+A ring buffer of the last `pg_datasentinel.max_entries` checkpoint and restartpoint completions. Metrics are read directly from `CheckpointStats` — no log text parsing required.
 
 | Column | Type | Description |
 |---|---|---|
@@ -413,8 +413,8 @@ shared_preload_libraries
         v
    _PG_init()
         |
-        +-- pg_datasentinel.enabled  (GUC, runtime toggle)
-        +-- pg_datasentinel.max      (GUC, ring buffer capacity)
+        +-- pg_datasentinel.enabled      (GUC, runtime toggle)
+        +-- pg_datasentinel.max_entries  (GUC, ring buffer capacity)
         +-- shmem_request_hook      -> allocate 5 ring buffers in shared memory
         +-- shmem_startup_hook      -> initialise ring buffer headers + LWLocks
         +-- emit_log_hook           -> intercept LOG messages
@@ -431,7 +431,7 @@ shared_preload_libraries
                                                                    ring buffer
 ```
 
-Each ring buffer is a fixed-size circular array stored in PostgreSQL shared memory, protected by a dedicated LWLock. When the buffer is full, the oldest entry is silently overwritten so that the most recent `pg_datasentinel.max` events are always retained. No background worker is required.
+Each ring buffer is a fixed-size circular array stored in PostgreSQL shared memory, protected by a dedicated LWLock. When the buffer is full, the oldest entry is silently overwritten so that the most recent `pg_datasentinel.max_entries` events are always retained. No background worker is required.
 
 ---
 

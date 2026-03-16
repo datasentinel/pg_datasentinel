@@ -1852,7 +1852,7 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
-	DefineCustomIntVariable("pg_datasentinel.max",
+	DefineCustomIntVariable("pg_datasentinel.max_entries",
 							"Sets the maximum number of actions tracked by pg_datasentinel.",
 							NULL,
 							&pgds_max_actions,
