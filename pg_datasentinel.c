@@ -777,6 +777,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	int						snap_count = 0;
 	PgdsXidSnapshotEntry	oldest_e,
 							newest_e;
+	double					elapsed_sec = 0;
 
 	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
 		ereport(ERROR,
@@ -865,7 +866,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	/* [6..9] XID rate and ETA — require at least 2 snapshots */
 	if (snap_count >= 2)
 	{
-		double elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
+		elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
 							 / USECS_PER_SEC;
 
 		if (elapsed_sec > 0)
@@ -933,7 +934,7 @@ ds_wraparound_risk_info(PG_FUNCTION_ARGS)
 	/* [13..16] MXID rate and ETA — require at least 2 snapshots */
 	if (snap_count >= 2)
 	{
-		double elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
+		elapsed_sec = (double) (newest_e.logged_at - oldest_e.logged_at)
 							 / USECS_PER_SEC;
 
 		if (elapsed_sec > 0)
@@ -1233,8 +1234,8 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 #ifdef __linux__
 		if (proc_accessible)
 		{
-			long		rss_pages = pgds_get_rss_memory_pages(beentry->st_procpid);
-			long		temp_bytes = pgds_get_temp_file_bytes(beentry->st_procpid);
+			int64		rss_pages = pgds_get_rss_memory_pages(beentry->st_procpid);
+			int64		temp_bytes = pgds_get_temp_file_bytes(beentry->st_procpid);
 
 			if (rss_pages < 0)
 				nulls[i++] = true;
@@ -1434,6 +1435,8 @@ pgds_log_tempfile(ErrorData *edata)
 {
 	PgdsTempfileEntry *e;
 	const char *p;
+	const char *dbname = get_database_name(MyDatabaseId);
+	const char *rolname = GetUserNameFromId(GetUserId(), true);
 
 	LWLockAcquire(pgds_tempfile->lock, LW_EXCLUSIVE);
 
@@ -1441,17 +1444,8 @@ pgds_log_tempfile(ErrorData *edata)
 
 	e->logged_at = GetCurrentTimestamp();
 
-	{
-		const char *dbname = get_database_name(MyDatabaseId);
-
-		strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
-	}
-
-	{
-		const char *rolname = GetUserNameFromId(GetUserId(), true);
-
-		strlcpy(e->username, rolname ? rolname : "", NAMEDATALEN);
-	}
+	strlcpy(e->datname, dbname ? dbname : "", NAMEDATALEN);
+	strlcpy(e->username, rolname ? rolname : "", NAMEDATALEN);
 
 	e->pid = MyProcPid;
 
