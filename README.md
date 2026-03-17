@@ -1,8 +1,12 @@
 # pg_datasentinel
 
-`pg_datasentinel` is a PostgreSQL extension that adds observability views not available from standard catalog views. It enriches `pg_stat_activity` with per-backend memory and temporary file usage (linux only), captures vacuum, analyze, temporary file, and checkpoint events into shared-memory ring buffers, estimates XID and MXID wraparound risk with rate-based ETAs, and reports container CPU and memory limits via cgroups. A single-row summary view covers all ring buffers for dashboards and alerting.
+`pg_datasentinel` is a PostgreSQL extension that adds observability views not available from standard catalog views.  
 
-It must be loaded via `shared_preload_libraries` and works on Linux.
+It enriches `pg_stat_activity` with per-backend memory and temporary file usage (linux only), captures vacuum, analyze, temporary file, and checkpoint events into shared-memory ring buffers, estimates XID and MXID wraparound risk with rate-based ETAs, and reports container CPU and memory limits via cgroups.  
+
+A single-row summary view covers all ring buffers for dashboards and alerting.
+
+It must be loaded via `shared_preload_libraries`.
 
 ---
 
@@ -34,13 +38,6 @@ make
 sudo make install
 ```
 
-If `pg_config` is not on your `PATH`, pass its location explicitly:
-
-```bash
-make PG_CONFIG=/path/to/pg_config
-sudo make install PG_CONFIG=/path/to/pg_config
-```
-
 ---
 
 ## Configuration
@@ -56,7 +53,9 @@ shared_preload_libraries = 'pg_datasentinel'
 To capture Autovacuum and autoanalyze events
 
 ```
-log_autovacuum_min_duration = 0   # Log every autovacuum and autoanalyze operation. Set to 0 to log all runs, or to a positive value to log only operations exceeding the specified threshold.
+# Log every autovacuum and autoanalyze operation.
+# Set to 0 to log all runs, or to a positive value to log only operations exceeding the specified threshold.
+log_autovacuum_min_duration = 0   
 ```
 
 To capture temporary file events:
@@ -69,10 +68,10 @@ log_temp_files = 0                # log every temporary file creation
 
 | Parameter | Type | Default | Description |
 |---|---|---|---|
-| `pg_datasentinel.enabled` | bool | `on` | Enable or disable log message capture at runtime. |
-| `pg_datasentinel.max_entries` | int | `1000` | Capacity of each ring buffer (vacuum, analyze, temp files, checkpoints). When full, the oldest entry is overwritten. Requires a server restart. The XID snapshot buffer is fixed at 504 entries (~21 days at one snapshot per hour). |
-| `pg_datasentinel.maintenance_force_verbose` | bool | `off` | When `on`, automatically adds `VERBOSE` to every manual `VACUUM` and `ANALYZE` command so that their output is captured in the ring buffers alongside autovacuum/autoanalyze entries. |
-| `pg_datasentinel.ignore_system_schemas` | bool | `on` | When `on`, silently skips vacuum and analyze log entries for `pg_catalog` and `information_schema`. Reduces noise in the ring buffers from system-table maintenance. |
+| `pg_datasentinel.enabled` | bool | on | Enable or disable log message capture at runtime. |
+| `pg_datasentinel.max_entries` | int | 1000 | Capacity of each ring buffer (vacuum, analyze, temp files, checkpoints). When full, the oldest entry is overwritten. Requires a server restart. The XID snapshot buffer is fixed at 504 entries (~21 days at one snapshot per hour). |
+| `pg_datasentinel.maintenance_force_verbose` | bool | off | When `on`, automatically adds `VERBOSE` to every manual `VACUUM` and `ANALYZE` command so that their output is captured in the ring buffers alongside autovacuum/autoanalyze entries. |
+| `pg_datasentinel.ignore_system_schemas` | bool | on | When `on`, silently skips vacuum and analyze log entries for `pg_catalog` and `information_schema`. Reduces noise in the ring buffers from system-table maintenance. |
 
 ### postgresql.conf example
 
