@@ -124,6 +124,26 @@ FROM ds_stat_activity
 WHERE state = 'active';
 ```
 
+**PostgreSQL 18+** 
+
+When used alongside the [`pg_store_plans`](https://github.com/datasentinel/pg_store_plans) extension (fork), `plan_id` makes it straightforward to display the execution plan currently running in each active backend. Join on `dbid`, `userid`, and `planid`:
+
+```sql
+SELECT
+    a.pid,
+    a.usename,
+    a.state,
+    a.query,
+    p.plan
+FROM ds_stat_activity a
+JOIN pg_store_plans p
+    ON p.dbid   = a.datid
+   AND p.userid = a.usesysid
+   AND p.planid = a.plan_id
+WHERE a.state = 'active'
+  AND a.plan_id IS NOT NULL;
+```
+
 ---
 
 ### ds_container_resources
