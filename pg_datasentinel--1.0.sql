@@ -149,6 +149,11 @@ RETURNS void
 AS 'MODULE_PATHNAME'
 LANGUAGE C PARALLEL SAFE;
 
+CREATE FUNCTION ds_xid_snapshots_reset()
+RETURNS void
+AS 'MODULE_PATHNAME'
+LANGUAGE C PARALLEL SAFE;
+
 CREATE FUNCTION ds_activity_reset_all()
 RETURNS void
 AS 'MODULE_PATHNAME'
@@ -295,6 +300,7 @@ REVOKE EXECUTE ON FUNCTION
     ds_container_resource_info(),
     ds_checkpoint_msgs(),
     ds_checkpoint_activity_reset(),
+    ds_xid_snapshots_reset(),
     ds_activity_reset_all(),
     ds_xid_snapshot_msgs(),
     ds_wraparound_risk_info()

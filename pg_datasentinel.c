@@ -280,6 +280,7 @@ PG_FUNCTION_INFO_V1(ds_tempfile_msgs);
 PG_FUNCTION_INFO_V1(ds_tempfile_activity_reset);
 PG_FUNCTION_INFO_V1(ds_checkpoint_msgs);
 PG_FUNCTION_INFO_V1(ds_checkpoint_activity_reset);
+PG_FUNCTION_INFO_V1(ds_xid_snapshots_reset);
 PG_FUNCTION_INFO_V1(ds_activity_reset_all);
 PG_FUNCTION_INFO_V1(ds_xid_snapshot_msgs);
 PG_FUNCTION_INFO_V1(ds_wraparound_risk_info);
@@ -611,6 +612,24 @@ ds_checkpoint_activity_reset(PG_FUNCTION_ARGS)
 	pgds_checkpoint->tail  = 0;
 	pgds_checkpoint->count = 0;
 	LWLockRelease(pgds_checkpoint->lock);
+
+	PG_RETURN_VOID();
+}
+
+/*
+ * ds_xid_snapshots_reset: discard all entries from the XID snapshot ring buffer.
+ */
+Datum
+ds_xid_snapshots_reset(PG_FUNCTION_ARGS)
+{
+	if (pgds_xid_snapshot == NULL)
+		PG_RETURN_VOID();
+
+	LWLockAcquire(pgds_xid_snapshot->lock, LW_EXCLUSIVE);
+	pgds_xid_snapshot->head  = 0;
+	pgds_xid_snapshot->tail  = 0;
+	pgds_xid_snapshot->count = 0;
+	LWLockRelease(pgds_xid_snapshot->lock);
 
 	PG_RETURN_VOID();
 }

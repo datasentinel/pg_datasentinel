@@ -89,7 +89,7 @@ pgds_get_rss_memory_pages(int pid)
 	{
 		int64		size, share, text_pages, lib, data,	dt;
 
-		if (fscanf(fp, "%" INT64_FORMAT " %" INT64_FORMAT " %" INT64_FORMAT " %" INT64_FORMAT " %" INT64_FORMAT " %" INT64_FORMAT " %" INT64_FORMAT,
+		if (fscanf(fp, INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT,
 				   &size, &rss, &share, &text_pages, &lib, &data, &dt) != 7)
 		{
 			rss = -1;
