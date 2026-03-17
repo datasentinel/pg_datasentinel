@@ -71,8 +71,8 @@ pgds_get_temp_file_bytes(int pid)
 	closedir(dir);
 
 	elog(DEBUG1, "Total temporary file usage for PID %d: " INT64_FORMAT " bytes",
-    	pid, temporary_size);
-	 	return temporary_size;
+		 pid, temporary_size);
+	return temporary_size;
 }
 
 int64
