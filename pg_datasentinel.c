@@ -39,7 +39,7 @@ void		_PG_fini(void);
 #define PROC_VIRTUAL_FS    "/proc"
 #endif
 
-#define DS_STAT_IDS_COLS		4
+#define DS_STAT_IDS_COLS		5
 #define DS_VACUUM_COLS			18
 #define DS_ANALYZE_COLS			14
 #define DS_TEMPFILE_COLS		7
@@ -268,6 +268,7 @@ static int	pgds_max_actions;		/* max # actions to track */
 static bool	pgds_enabled;		/* enable/disable log capture at runtime */
 static bool	pgds_maintenance_force_verbose; /* force VERBOSE on manual VACUUM/ANALYZE */
 static bool	pgds_ignore_system_schemas; /* skip pg_catalog and information_schema entries */
+static bool pgds_enable_pss_memory;	/* also compute PSS memory per backend (expensive) */
 static bool pgds_in_emit_log = false;
 
 
@@ -1221,7 +1222,6 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
 #ifdef __linux__
-	long		page_size = sysconf(_SC_PAGESIZE);
 	bool		proc_accessible = pgds_is_dir_accessible(PROC_VIRTUAL_FS);
 #endif
 
@@ -1253,13 +1253,25 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 #ifdef __linux__
 		if (proc_accessible)
 		{
-			int64		rss_pages = pgds_get_rss_memory_pages(beentry->st_procpid);
+			int64		rss_bytes = pgds_get_rss_memory_bytes(beentry->st_procpid);
+			int64		pss_bytes;
 			int64		temp_bytes = pgds_get_temp_file_bytes(beentry->st_procpid);
 
-			if (rss_pages < 0)
+			if (rss_bytes < 0)
 				nulls[i++] = true;
 			else
-				values[i++] = Int64GetDatum(rss_pages * page_size);
+				values[i++] = Int64GetDatum(rss_bytes);
+
+			if (pgds_enable_pss_memory)
+			{
+				pss_bytes = pgds_get_pss_memory_bytes(beentry->st_procpid);
+				if (pss_bytes < 0)
+					nulls[i++] = true;
+				else
+					values[i++] = Int64GetDatum(pss_bytes);
+			}
+			else
+				nulls[i++] = true;
 
 			if (temp_bytes < 0)
 				nulls[i++] = true;
@@ -1270,8 +1282,10 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 		{
 			nulls[i++] = true;
 			nulls[i++] = true;
+			nulls[i++] = true;
 		}
 #else
+		nulls[i++] = true;
 		nulls[i++] = true;
 		nulls[i++] = true;
 #endif
@@ -1858,6 +1872,19 @@ _PG_init(void)
 							 NULL,
 							 &pgds_ignore_system_schemas,
 							 true,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomBoolVariable("pg_datasentinel.enable_pss_memory",
+							 "Also compute PSS (Proportional Set Size) memory per backend. "
+							 "Requires reading /proc/<pid>/smaps_rollup once per backend, "
+							 "which can be expensive if hundreds of backends.",
+							 NULL,
+							 &pgds_enable_pss_memory,
+							 false,
 							 PGC_SUSET,
 							 0,
 							 NULL,

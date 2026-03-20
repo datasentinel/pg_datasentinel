@@ -142,8 +142,10 @@ SELECT test_pgds_proc_functions();
  Test: is_dir_accessible(/tmp) = true                       PASS+
  Test: is_dir_accessible(/nonexistent) = false              PASS+
  Test: is_dir_accessible(/etc/passwd) = false               PASS+
- Test: get_rss_memory_pages(self) > 0                       PASS+
- Test: get_rss_memory_pages(-1) = -1                        PASS+
+ Test: get_rss_memory_bytes(self) > 0                       PASS+
+ Test: get_rss_memory_bytes(-1) = -1                        PASS+
+ Test: get_pss_memory_bytes(self) > 0                       PASS+
+ Test: get_pss_memory_bytes(-1) = -1                        PASS+
  Test: get_temp_file_bytes(self) >= 0                       PASS+
  Test: get_temp_file_bytes(-1) = -1                         PASS+
                                                                 +
