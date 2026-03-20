@@ -46,7 +46,7 @@ void		_PG_fini(void);
 #define DS_CHECKPOINT_COLS		16
 #define DS_XID_SNAPSHOT_COLS	7
 #define DS_WRAPAROUND_RISK_COLS	17
-#define DS_CGROUP_COLS	5
+#define DS_CGROUP_COLS	6
 
 
 /* Message max length */
@@ -1040,6 +1040,11 @@ ds_container_resource_info(PG_FUNCTION_ARGS)
 #ifdef __linux__
 	{
 		PgdsCgroupInfo	cg;
+
+		/* is_container */
+		values[i] = BoolGetDatum(pgds_is_container());
+		nulls[i]  = false;
+		i++;
 
 		if (pgds_read_cgroup_info(&cg))
 		{

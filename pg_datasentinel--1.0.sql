@@ -101,6 +101,7 @@ LANGUAGE C PARALLEL SAFE;
 
 
 CREATE FUNCTION ds_container_resource_info(
+    OUT is_container         bool,
     OUT cgroup_version       int4,
     OUT cpu_limit            float8,
     OUT mem_limit_bytes      int8,
@@ -112,7 +113,8 @@ AS 'MODULE_PATHNAME'
 LANGUAGE C VOLATILE;
 
 CREATE VIEW ds_container_resources AS
-    SELECT cpu_limit,
+    SELECT is_container,
+        cpu_limit,
         cpu_pressure_pct_60s,
         mem_limit_bytes,
         mem_used as mem_used_bytes,

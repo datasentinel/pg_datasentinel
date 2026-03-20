@@ -7,6 +7,9 @@ SELECT count(*) >= 0 AS vacuum_view_ok FROM ds_vacuum_activity;
 -- Verify the stat activity view is queryable
 SELECT count(*) >= 0 AS stat_activity_ok FROM ds_stat_activity;
 
+-- Verify ds_container_resources is queryable and is_container is always set
+SELECT is_container IS NOT NULL AS is_container_not_null FROM ds_container_resources;
+
 select ds_vacuum_activity_reset();
 
 show log_autovacuum_min_duration;

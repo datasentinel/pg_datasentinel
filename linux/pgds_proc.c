@@ -11,6 +11,34 @@
 #endif
 
 bool
+pgds_is_container(void)
+{
+	FILE   *f;
+	char	comm[64];
+	size_t	len;
+
+	if (!pgds_is_dir_accessible("/proc"))
+		return false;
+
+	f = fopen("/proc/1/comm", "r");
+	if (f == NULL)
+		return false;
+
+	if (fgets(comm, sizeof(comm), f) == NULL)
+	{
+		fclose(f);
+		return false;
+	}
+	fclose(f);
+
+	len = strlen(comm);
+	if (len > 0 && comm[len - 1] == '\n')
+		comm[len - 1] = '\0';
+
+	return strcmp(comm, "systemd") != 0;
+}
+
+bool
 pgds_is_dir_accessible(const char *path)
 {
 	DIR		   *dirp = opendir(path);
