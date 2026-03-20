@@ -13,7 +13,7 @@ It must be loaded via `shared_preload_libraries`.
 ## Features
 
 - **`ds_stat_activity`** — extends `pg_stat_activity` with real-time memory usage (resident set size from `/proc`), live temporary file bytes, and (PostgreSQL 18+) the current plan ID for each backend.
-- **`ds_container_resources`** — single-row view that reports cgroup v1/v2 CPU quota, memory hard limit, current memory usage, and CPU pressure (PSI avg60, cgroup v2 only) for the PostgreSQL process.
+- **`ds_container_resources`** — single-row view that reports whether PostgreSQL is running inside a container, cgroup v1/v2 CPU quota, memory hard limit, current memory usage, and CPU pressure (PSI avg60, cgroup v2 only) for the PostgreSQL process.
 - **`ds_wraparound_risk`** — single-row view that samples XID and MXID at each checkpoint (at most once per hour) and provides live distances to the aggressive-vacuum and wraparound limits for both XID and MXID, plus rate-based ETAs that reflect whichever counter is closer to danger.
 - **`ds_vacuum_activity`** — captures autovacuum LOG messages and manual VACUUM INFO messages in a shared-memory ring buffer; parses page/tuple counters, CPU timings, whether the run was aggressive, and whether it was triggered manually.
 - **`ds_analyze_activity`** — captures autoanalyze LOG messages and manual ANALYZE INFO messages in a shared-memory ring buffer; parses sample block and extended-statistics counters, and whether the run was triggered automatically.
@@ -154,14 +154,16 @@ A single-row view that reports cgroup resource limits and current usage for the 
 
 | Column | Type | Description |
 |---|---|---|
+| `is_container` | bool | `true` if PostgreSQL appears to be running inside a container (detected by checking that `/proc/1/comm` is not `systemd`). Always non-NULL when `/proc` is accessible. |
+| `cgroup_version` | int4 | Cgroup version in use (`1` or `2`). `NULL` if not running under cgroups. |
 | `cpu_limit` | float8 | Hard CPU quota in fractional CPUs (e.g. `2.0` = 2 vCPUs). `NULL` if unlimited. |
 | `cpu_pressure_pct_60s` | float8 | CPU pressure (PSI `some avg60`, 0–100%). `NULL` on cgroup v1 or kernels without PSI support. |
 | `mem_limit_bytes` | int8 | Hard memory limit in bytes. `NULL` if unlimited. |
 | `mem_used_bytes` | int8 | Current memory usage in bytes (`memory.current` on cgroup v2, `memory.usage_in_bytes` on cgroup v1). |
-| `cgroup_version` | int4 | Cgroup version in use (`1` or `2`). `NULL` if not running under cgroups. |
 
 ```sql
 SELECT
+    is_container,
     cgroup_version,
     cpu_limit,
     cpu_pressure_pct_60s,
