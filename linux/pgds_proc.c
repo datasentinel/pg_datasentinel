@@ -76,30 +76,29 @@ pgds_get_temp_file_bytes(int pid)
 }
 
 int64
-pgds_get_rss_memory_pages(int pid)
+pgds_get_pss_memory_bytes(int pid)
 {
-	int64		rss = 0;
 	FILE	   *fp;
 	char		filename[256];
+	char		line[256];
+	int64		pss_kb = -1;
 
-	snprintf(filename, sizeof(filename), "/proc/%d/statm", pid);
+	snprintf(filename, sizeof(filename), "/proc/%d/smaps_rollup", pid);
 
 	fp = fopen(filename, "r");
-	if (fp != NULL)
-	{
-		int64		size, share, text_pages, lib, data,	dt;
+	if (fp == NULL)
+		return -1;
 
-		if (fscanf(fp, INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT " " INT64_FORMAT,
-				   &size, &rss, &share, &text_pages, &lib, &data, &dt) != 7)
-		{
-			rss = -1;
-		}
-		fclose(fp);
-	}
-	else
+	while (fgets(line, sizeof(line), fp) != NULL)
 	{
-		rss = -1;
+		if (sscanf(line, "Pss: " INT64_FORMAT " kB", &pss_kb) == 1)
+			break;
 	}
 
-	return rss;
+	fclose(fp);
+
+	if (pss_kb < 0)
+		return -1;
+
+	return pss_kb * 1024;
 }

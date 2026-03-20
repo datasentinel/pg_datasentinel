@@ -1221,7 +1221,6 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 	int			num_backends = pgstat_fetch_stat_numbackends();
 	int			curr_backend;
 #ifdef __linux__
-	long		page_size = sysconf(_SC_PAGESIZE);
 	bool		proc_accessible = pgds_is_dir_accessible(PROC_VIRTUAL_FS);
 #endif
 
@@ -1253,13 +1252,13 @@ ds_stat_pids(PG_FUNCTION_ARGS)
 #ifdef __linux__
 		if (proc_accessible)
 		{
-			int64		rss_pages = pgds_get_rss_memory_pages(beentry->st_procpid);
+			int64		pss_bytes = pgds_get_pss_memory_bytes(beentry->st_procpid);
 			int64		temp_bytes = pgds_get_temp_file_bytes(beentry->st_procpid);
 
-			if (rss_pages < 0)
+			if (pss_bytes < 0)
 				nulls[i++] = true;
 			else
-				values[i++] = Int64GetDatum(rss_pages * page_size);
+				values[i++] = Int64GetDatum(pss_bytes);
 
 			if (temp_bytes < 0)
 				nulls[i++] = true;
