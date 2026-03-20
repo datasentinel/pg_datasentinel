@@ -484,8 +484,8 @@ test_pgds_vacuum_is_verbose(PG_FUNCTION_ARGS)
 /*
  * test_pgds_proc_functions
  *
- * Unit tests for pgds_is_dir_accessible(), pgds_get_pss_memory_bytes(), and
- * pgds_get_temp_file_bytes() from linux/pgds_proc.c.
+ * Unit tests for pgds_is_dir_accessible(), pgds_get_rss_memory_bytes(),
+ * pgds_get_pss_memory_bytes(), and pgds_get_temp_file_bytes() from linux/pgds_proc.c.
  * On non-Linux platforms the function returns a SKIPPED notice.
  */
 Datum
@@ -507,6 +507,12 @@ test_pgds_proc_functions(PG_FUNCTION_ARGS)
 		 !pgds_is_dir_accessible("/nonexistent_pgds_test_xyz_123"));
 	TEST("is_dir_accessible(/etc/passwd) = false",
 		 !pgds_is_dir_accessible("/etc/passwd"));
+
+	val = pgds_get_rss_memory_bytes(mypid);
+	TEST("get_rss_memory_bytes(self) > 0", val > 0);
+
+	val = pgds_get_rss_memory_bytes(-1);
+	TEST("get_rss_memory_bytes(-1) = -1", val == -1);
 
 	val = pgds_get_pss_memory_bytes(mypid);
 	TEST("get_pss_memory_bytes(self) > 0", val > 0);

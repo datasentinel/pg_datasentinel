@@ -72,6 +72,7 @@ log_temp_files = 0                # log every temporary file creation
 | `pg_datasentinel.max_entries` | int | 1000 | Capacity of each ring buffer (vacuum, analyze, temp files, checkpoints). When full, the oldest entry is overwritten. Requires a server restart. The XID snapshot buffer is fixed at 504 entries (~21 days at one snapshot per hour). |
 | `pg_datasentinel.maintenance_force_verbose` | bool | off | When `on`, automatically adds `VERBOSE` to every manual `VACUUM` and `ANALYZE` command so that their output is captured in the ring buffers alongside autovacuum/autoanalyze entries. |
 | `pg_datasentinel.ignore_system_schemas` | bool | on | When `on`, silently skips vacuum and analyze log entries for `pg_catalog` and `information_schema`. Reduces noise in the ring buffers from system-table maintenance. |
+| `pg_datasentinel.enable_pss_memory` | bool | off | When `on`, also computes PSS (Proportional Set Size) memory for each backend by reading `/proc/<pid>/smaps_rollup`. More accurate than RSS for shared-library accounting, but requires one file read per backend per query. |
 
 ### postgresql.conf example
 
@@ -90,6 +91,7 @@ pg_datasentinel.enabled                   = on
 pg_datasentinel.max_entries               = 1000
 pg_datasentinel.maintenance_force_verbose = off
 pg_datasentinel.ignore_system_schemas     = on
+pg_datasentinel.enable_pss_memory        = off
 ```
 
 ---
@@ -108,17 +110,18 @@ CREATE EXTENSION pg_datasentinel;
 
 ### ds_stat_activity
 
-Extends `pg_stat_activity` with three additional columns populated from `/proc/<pid>/statm` and `/proc/<pid>/fd/`.
+Extends `pg_stat_activity` with additional columns populated from `/proc/<pid>/statm`, `/proc/<pid>/smaps_rollup`, and `/proc/<pid>/fd/`.
 
 | Column | Type | Description |
 |---|---|---|
 | *(all pg_stat_activity columns)* | | |
-| `memory_bytes` | int8 | Resident set size of the backend process in bytes. `NULL` if `/proc` is not accessible. |
+| `rss_memory_bytes` | int8 | Resident set size of the backend process in bytes. `NULL` if `/proc` is not accessible. |
+| `pss_memory_bytes` | int8 | Proportional set size of the backend process in bytes. Only populated when `pg_datasentinel.enable_pss_memory = on`. `NULL` otherwise or if `/proc` is not accessible. |
 | `temp_bytes` | int8 | Total bytes used by PostgreSQL temporary files currently open by the backend. `NULL` if `/proc` is not accessible. |
 | `plan_id` | int8 | Current plan identifier (PostgreSQL 18+ only; `NULL` on earlier versions). |
 
 ```sql
-SELECT pid, usename, state, memory_bytes, temp_bytes
+SELECT pid, usename, state, rss_memory_bytes, pss_memory_bytes, temp_bytes
 FROM ds_stat_activity
 WHERE state = 'active';
 ```
