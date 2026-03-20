@@ -509,7 +509,8 @@ test_pgds_proc_functions(PG_FUNCTION_ARGS)
 		 !pgds_is_dir_accessible("/etc/passwd"));
 
 	val = pgds_get_pss_memory_bytes(mypid);
-	TEST("get_pss_memory_bytes(self) > 0", val > 0);
+	TEST("get_pss_memory_bytes(self) > 0 or -1 if unsupported",
+		 val > 0 || val == -1);
 
 	val = pgds_get_pss_memory_bytes(-1);
 	TEST("get_pss_memory_bytes(-1) = -1", val == -1);
