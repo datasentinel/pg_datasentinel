@@ -9,13 +9,13 @@ SELECT
     count(schemaname    IS NOT NULL) AS has_schemaname,
     count(relname       IS NOT NULL) AS has_relname,
     count(relid         IS NOT NULL) AS has_relid,
-    count(aggressive    IS NOT NULL) AS has_aggressive,
+    count(is_aggressive IS NOT NULL) AS has_is_aggressive,
     count(is_automatic     IS NOT NULL) AS has_is_automatic,
     count(message       IS NOT NULL) AS has_message
 FROM ds_vacuum_activity where message ~* 'test_av';
 
 -- A normal autovacuum should not be flagged as aggressive
-SELECT bool_and(aggressive = false) AS not_aggressive
+SELECT bool_and(is_aggressive = false) AS not_aggressive
 FROM ds_vacuum_activity
 WHERE message ~* 'test_av';
 

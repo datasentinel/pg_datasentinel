@@ -87,7 +87,7 @@ typedef struct PgdsVacuumEntry
 	double		user_cpu;
 	double		sys_cpu;
 	double		elapsed;
-	bool		aggressive;				/* true if "automatic aggressive vacuum" */
+	bool		is_aggressive;			/* true if "automatic aggressive vacuum" */
 	bool		is_automatic;			/* true if triggered by autovacuum */
 	char		message[PGDS_VACUUM_MSG_LEN];
 } PgdsVacuumEntry;
@@ -352,7 +352,7 @@ ds_vacuum_msgs(PG_FUNCTION_ARGS)
 		values[i++] = Float8GetDatum(pgds_vacuum->entries[idx].user_cpu);
 		values[i++] = Float8GetDatum(pgds_vacuum->entries[idx].sys_cpu);
 		values[i++] = Float8GetDatum(pgds_vacuum->entries[idx].elapsed);
-		values[i++] = BoolGetDatum(pgds_vacuum->entries[idx].aggressive);
+		values[i++] = BoolGetDatum(pgds_vacuum->entries[idx].is_aggressive);
 		values[i++] = BoolGetDatum(pgds_vacuum->entries[idx].is_automatic);
 		values[i++] = CStringGetTextDatum(pgds_vacuum->entries[idx].message);
 		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
@@ -1363,7 +1363,7 @@ pgds_log_vacuum(ErrorData *edata, bool is_automatic)
 						 &e->user_cpu,
 						 &e->sys_cpu,
 						 &e->elapsed);
-	e->aggressive = (strstr(edata->message, "automatic aggressive vacuum") != NULL);
+	e->is_aggressive = (strstr(edata->message, "automatic aggressive vacuum") != NULL);
 	e->is_automatic = is_automatic;
 
 	strlcpy(e->message, edata->message, PGDS_VACUUM_MSG_LEN);

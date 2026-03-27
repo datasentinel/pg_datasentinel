@@ -32,7 +32,7 @@ CREATE FUNCTION ds_vacuum_msgs(
     OUT user_cpu             float8,
     OUT sys_cpu              float8,
     OUT elapsed              float8,
-    OUT aggressive           bool,
+    OUT is_aggressive        bool,
     OUT is_automatic         bool,
     OUT message              text
 )

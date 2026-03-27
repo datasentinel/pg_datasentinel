@@ -251,13 +251,13 @@ A ring buffer of the last `pg_datasentinel.max_entries` vacuum messages (both au
 | `user_cpu` | float8 | User CPU time in seconds. |
 | `sys_cpu` | float8 | System CPU time in seconds. |
 | `elapsed` | float8 | Elapsed wall-clock time in seconds. |
-| `aggressive` | bool | `true` if this was an aggressive vacuum to prevent wraparound (`automatic aggressive vacuum`). |
+| `is_aggressive` | bool | `true` if this was an aggressive vacuum to prevent wraparound (`automatic aggressive vacuum`). |
 | `is_automatic` | bool | `true` if triggered by autovacuum; `false` if triggered by a manual `VACUUM` command. |
 | `message` | text | Full raw log message text. |
 
 ```sql
 -- Recent vacuum runs, slowest first
-SELECT logged_at, schemaname, relname, elapsed, tuples_removed, aggressive, is_automatic
+SELECT logged_at, schemaname, relname, elapsed, tuples_removed, is_aggressive, is_automatic
 FROM ds_vacuum_activity
 ORDER BY elapsed DESC;
 
