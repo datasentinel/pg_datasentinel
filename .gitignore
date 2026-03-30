@@ -1,0 +1,9 @@
+*.o
+*.obj
+*.bc
+*.so
+*.dll
+.deps/
+.vscode/
+.claude/
+AUDIT.md
